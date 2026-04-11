@@ -12,7 +12,18 @@ ExtAgents is a framework for scaling external knowledge input beyond the context
 
 ![overview](./figs/overview.png)
 
+Overview of ExtAgents: Our framework consists of multiple agents with fixed context windows, that collaboratively process (a) scalable external knowledge inputs beyond the context limit. It features (b) global knowledge synchronization, and (c) knowledge-accumulate reasoning processes by sharing a ranking mechanism at each timestep. Moreover, ExtAgents support (d) both multi-hop QA and long survey generation tasks.
+
+## News
+
+- **[2026-04-07]** Our paper *Scaling External Knowledge Input Beyond Context Windows of LLMs via Multi-Agent Collaboration* has been accepted to **ACL 2026**.
+
 ## Setup
+
+```bash
+git clone https://github.com/THUNLP-MT/ExtAgents.git
+cd ExtAgents
+```
 
 ```bash
 conda create -n extagents python=3.10 -y

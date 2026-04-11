@@ -181,6 +181,48 @@ def postprocess_prediction(prediction, question, prompt_module):
         return prediction, 0.0  # Return original prediction if processing fails
 
 
+def process_info_list(info_list, tokenizer, max_tokens, task):
+    """
+    Truncate info list to fit within max_tokens.
+    For en/zh: sort by score descending and keep top items.
+    For rag: keep items in original order.
+
+    Args:
+        info_list: List of (info, score) tuples for en/zh, or list of info strings for rag
+        tokenizer: Tokenizer for token counting
+        max_tokens: Maximum total tokens allowed
+        task: Task type ("en", "zh", or "rag")
+
+    Returns:
+        Truncated info list in the same format as input
+    """
+    if max_tokens <= 0:
+        return info_list[:1] if info_list else info_list
+
+    if task in ["en", "zh"]:
+        sorted_list = sorted(info_list, key=lambda x: x[1], reverse=True)
+        result = []
+        total_tokens = 0
+        for info, score in sorted_list:
+            tokens = len(tokenizer.encode(info))
+            if total_tokens + tokens > max_tokens and result:
+                break
+            result.append((info, score))
+            total_tokens += tokens
+        return result
+    elif task == "rag":
+        result = []
+        total_tokens = 0
+        for info in info_list:
+            tokens = len(tokenizer.encode(info))
+            if total_tokens + tokens > max_tokens and result:
+                break
+            result.append(info)
+            total_tokens += tokens
+        return result
+    return info_list
+
+
 def dump_jsonl(data, fname):
     """Write data to a jsonl file"""
     with open(fname, "w", encoding="utf8") as fout:

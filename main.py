@@ -11,11 +11,12 @@ def parse_args():
     parser.add_argument("--task", type=str, default="rag", choices=["en", "zh", "rag"])
     parser.add_argument("--output_dir", type=str, default="./results_zh")
     parser.add_argument("--chunk_length", type=int, default=8000)
-    parser.add_argument("--input_length", type=int, default=8000)
+    parser.add_argument("--input_length", type=int, default=128000)
     parser.add_argument("--api_url", type=str, default=str(os.getenv("OPENAI_BASE_URL")))
     parser.add_argument("--api_key", type=str, default=str(os.getenv("OPENAI_API_KEY")))
     parser.add_argument("--model", type=str, default="gpt-4o-mini-2024-07-18")
     parser.add_argument("--num_workers", type=int, default=1)
+    parser.add_argument("--context_length", type=int, default=128000)
     parser.add_argument("--data_path", type=str, default=None)
     return parser.parse_args()
 
@@ -27,6 +28,7 @@ def main():
     output_dir = Path(args.output_dir)
     chunk_length = args.chunk_length
     input_length = args.input_length
+    context_length = args.context_length
     data_path = args.data_path
     
     # Initialize OpenAI client and set global variables
@@ -66,7 +68,8 @@ def main():
         chunk_length,
         input_length,
         output_dir,
-        max_workers=args.num_workers
+        max_workers=args.num_workers,
+        context_length=context_length,
     )
 
 

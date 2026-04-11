@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from . import prompt as prompt_module
 from . import utils
 
-def process_example(i, examples, tokenizer, task, chunk_length, input_length, max_iterations=5):
+def process_example(i, examples, tokenizer, task, chunk_length, input_length, max_iterations=5, context_length=128000):
     """
     Complete pipeline for processing a single example
     
@@ -62,13 +62,20 @@ def process_example(i, examples, tokenizer, task, chunk_length, input_length, ma
                 if iteration == 1:
                     prompt = prompt_module.create_first_iteration_prompt(task, chunk, question)
                 else:
+                    max_info_tokens = context_length - chunk_length - 1000
                     if task == "rag":
+                        processed_info = utils.process_info_list(
+                            filtered_info, tokenizer, max_info_tokens, task
+                        )
                         prompt = prompt_module.create_iteration_prompt(
-                            task, iteration, question, chunk, selected_info=filtered_info
+                            task, iteration, question, chunk, selected_info=processed_info
                         )
                     else:
+                        processed_info = utils.process_info_list(
+                            current_info, tokenizer, max_info_tokens, task
+                        )
                         prompt = prompt_module.create_iteration_prompt(
-                            task, iteration, question, chunk, selected_info=current_info
+                            task, iteration, question, chunk, selected_info=processed_info
                         )
                 
                 msgs = prompt_module.create_chunked_msgs(prompt)
@@ -244,7 +251,7 @@ def process_example(i, examples, tokenizer, task, chunk_length, input_length, ma
         return None
 
 
-def run_pipeline(examples, tokenizer, task, chunk_length, input_length, output_dir, max_workers=1):
+def run_pipeline(examples, tokenizer, task, chunk_length, input_length, output_dir, max_workers=1, context_length=128000):
     """
     Execute the complete Map-Reduce pipeline to process multiple examples
     
@@ -334,6 +341,7 @@ def run_pipeline(examples, tokenizer, task, chunk_length, input_length, output_d
                 task,
                 chunk_length,
                 input_length,
+                context_length=context_length,
             )
             futures.append(future)
 
