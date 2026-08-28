@@ -216,9 +216,8 @@ def process_example(i, examples, tokenizer, task, chunk_length, input_length, ma
                     if "no answer" not in final_pred.lower():
                         break
 
-        # Post-process prediction for open source models
-        is_open_source_model = "llama" in utils.model.lower()
-        if task == "rag" and is_open_source_model and final_pred != "NO ANSWER":
+        # Post-process prediction for local open-source models
+        if task == "rag" and utils.is_local_model() and final_pred != "NO ANSWER":
             original_pred = final_pred
             reduce_start_time = time.time()
             final_pred, post_time = utils.postprocess_prediction(final_pred, question, prompt_module)

@@ -12,6 +12,17 @@ from openai import OpenAI
 client = None
 model = None
 
+def is_local_model():
+    """Check if the current model is a local model (e.g., via Ollama)"""
+    global model
+    if not model:
+        return False
+    model_lower = model.lower()
+    return (
+        "llama" in model_lower or "qwen" in model_lower
+        or "ollama" in model_lower or "localhost" in model_lower
+    )
+
 def initialize_client(api_url, api_key, model_name):
     """Initialize client and set global variables"""
     global client, model
@@ -28,8 +39,7 @@ def initialize_client(api_url, api_key, model_name):
 
 def chat(messages: list):
     """Chat function using global client and model"""
-    is_open_source_model = "llama" in model.lower()
-    temperature = 0.1 if is_open_source_model else 0.0
+    temperature = 0.1 if is_local_model() else 0.0
     
     while True:
         try:

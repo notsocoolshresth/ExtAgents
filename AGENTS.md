@@ -11,11 +11,12 @@
   - Original paper: *Scaling External Knowledge Input Beyond The Context Length of LLMs via Multi-Agent Collaboration* ([arXiv:2505.21471](https://arxiv.org/abs/2505.21471))
 - **Our work**: An **original research extension** — a systematic study of **NLP chunking techniques** inside the ExtAgents map-reduce pipeline, targeting a **new ACL submission**.
 - **Status**: Pre-experiment phase. Baseline code is untouched. Documentation/knowledge base under construction.
+- **Research scope**: **English-only** — tasks `rag` and `en`. The upstream Zh.QA (Chinese) pipeline exists in the baseline code/eval scripts but is **out of scope** for this study; never run, cite, or plan around it.
 
 ## 2. Research Mission (Non-Negotiable North Star)
 
-1. Replace/augment the current **naive fixed-size token chunking** (`src/utils.py:104-133`) with principled chunking techniques (sentence-aware, overlap, recursive/structural, semantic, document-structure-aware).
-2. Measure impact on **world-standard benchmarks**: HotpotQA-based RAG and InfiniteBench En.QA/Zh.QA — using the repo's official eval scripts, unmodified.
+1. Replace/augment the current **naive fixed-size token chunking** (`src/utils.py:104-133`) with principled chunking techniques (overlap, recursive/structural, semantic, document-structure-aware).
+2. Measure impact on **world-standard benchmarks**: HotpotQA-based RAG and InfiniteBench En.QA — using the repo's official eval scripts, unmodified.
 3. Produce an **ACL-submittable paper**: every claim must be reproducible, ablated, and statistically defensible.
 
 **Quality bar**: This is not a college project. Every line of code must be reviewable, justified, and attributable to a decision recorded in `docs/research/session-log.md`. If you cannot explain *why* a change improves or preserves correctness, do not make it.
@@ -41,13 +42,12 @@
 |---|---|---|
 | RAG | `scripts/eval_rag.sh` → `src/eval/hotpot_evaluate_v1.py` vs `data/sampled_hotpot_questions.json` | HotpotQA EM + F1 |
 | En.QA | `scripts/eval_en.sh` → `src/eval/compute_scores_partial-enhanced.py --task longbook_qa_eng` | Word-level QA F1 (`compute_scores.py:63`) |
-| Zh.QA | `scripts/eval_zh.sh` → `--task longbook_qa_chn` | Character-level QA F1 (`compute_scores.py:82`) |
 
 Note: three compute_scores variants exist (`compute_scores.py`, `-full-enhanced`, `-partial-enhanced`). Always record which variant a run used in `docs/research/experiment-registry.md`.
 
 ### Data (gitignored; download via `bash scripts/download_data.sh`)
 
-`data/sampled_hotpot_questions.json`, `data/rag_1000k.jsonl`, `data/longbook_qa_eng.jsonl`, `data/longbook_qa_chn.jsonl`
+`data/sampled_hotpot_questions.json`, `data/rag_1000k.jsonl`, `data/longbook_qa_eng.jsonl`
 
 ## 4. Hard Rules for All Agents
 
@@ -86,7 +86,6 @@ python main.py --task rag --output_dir results_rag --chunk_length 8000 \
 # Evaluation
 bash scripts/eval_rag.sh results_rag   # HotpotQA EM/F1
 bash scripts/eval_en.sh results_en     # InfiniteBench longbook_qa_eng F1
-bash scripts/eval_zh.sh results_zh     # InfiniteBench longbook_qa_chn F1
 ```
 
 Environment note: primary dev machine is Windows (`C:\Users\Shresth\vscode2\ExtAgents`); bash scripts assume a POSIX shell (Git Bash/WSL).
@@ -95,6 +94,6 @@ Environment note: primary dev machine is Windows (`C:\Users\Shresth\vscode2\ExtA
 
 | File | Purpose |
 |---|---|
-| `docs/research/research-plan.md` | Study charter: research questions, hypotheses, candidate techniques C0–C5, ablation matrix, metrics, statistics protocol |
+| `docs/research/research-plan.md` | Study charter: research questions, hypotheses, candidate techniques C0/C1/C3–C5, ablation matrix, metrics, statistics protocol |
 | `docs/research/session-log.md` | Append-only journal; mandated entry format; one entry per session |
 | `docs/research/experiment-registry.md` | One row per benchmark run: run_id, config, scores, cost, notes |
