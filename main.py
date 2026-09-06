@@ -5,6 +5,7 @@ from pathlib import Path
 
 from src import utils
 from src import pipeline
+from src import chunkers
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -18,12 +19,14 @@ def parse_args():
     parser.add_argument("--num_workers", type=int, default=1)
     parser.add_argument("--context_length", type=int, default=32768)
     parser.add_argument("--data_path", type=str, default=None)
+    parser.add_argument("--chunker", type=str, default="legacy")
     return parser.parse_args()
 
 
 def main():
     # Parse command line arguments
     args = parse_args()
+    chunkers.install(args.chunker)
     task = args.task
     output_dir = Path(args.output_dir)
     chunk_length = args.chunk_length
@@ -39,7 +42,7 @@ def main():
     temperature = "0.1" if is_local_model else "0.0"
     
     # Print task and model
-    print(f"Task: {task} | Model: {args.model}")
+    print(f"Task: {task} | Model: {args.model} | Chunker: {args.chunker}")
 
     # Create output directory
     output_dir.mkdir(parents=True, exist_ok=True)

@@ -50,11 +50,11 @@ of chunking granularity/boundaries in a multi-agent map-reduce QA pipeline. That
 
 All techniques implement the existing interface:
 `create_chunks(tokenizer, context, chunk_length, input_length, manner) -> list[str]`
-(future module `src/chunkers.py`, selected via CLI flag; default = legacy behavior).
+(module `src/chunkers.py` — implemented in P2, selected via `--chunker <id>`; default `legacy` = baseline behavior).
 
 | ID | Technique | Definition | Expected effect | Risks/costs |
 |---|---|---|---|---|
-| **C0** | Fixed-size token blocks *(baseline)* | Current code path, unchanged | Reference point | — |
+| **C0** | Fixed-size token blocks *(baseline)* | Current code path, unchanged | Reference point | — 
 | **C1** | Sliding window + overlap | Fixed blocks with stride < window (e.g., 50% overlap); dedupe downstream info if needed | Recovers boundary-straddling evidence (H2) | ↑ #chunks (~2×) → ↑ cost; duplicate info may pollute reduce prompt |
 | **C3** | Recursive paragraph-aware splitting | Split on paragraphs first; oversized paragraphs recurse to sentences then words (LangChain-style, adapted to token counts) | Respects discourse units (H1) | Implementation complexity; edge cases (no paragraph breaks) |
 | **C4** | Semantic breakpoint chunking | Embed sliding windows; cut at local minima of adjacent-window cosine similarity; enforce min/max chunk sizes | Groups topically coherent content (H3) | Needs an embedding model (new dependency + runtime cost); embedding choice is itself a confound to ablate |
@@ -116,7 +116,7 @@ Diagnostics (for analysis sections):
 | Phase | Work | Exit criteria |
 |---|---|---|
 | P1 ✅ | Knowledge base (this doc set) | Done |
-| P2 | Literature review notes; `src/chunkers.py` behind CLI flag (default legacy); unit tests; logging of call counts/tokens; optional linter/type-check proposal | Baseline byte-identical outputs vs pre-change run on small sample |
+| P2 ⏳ | Literature review notes; `src/chunkers.py` behind CLI flag (default legacy) — **implemented (legacy + overlap + recursive_paragraph + tests)**; logging of call counts/tokens; optional linter/type-check proposal | Baseline byte-identical outputs vs pre-change run on small sample |
 | P3 | Baseline reproduction runs (C0) on all tasks; registry rows complete | Numbers stable & recorded; compare with published ExtAgents numbers |
 | P4 | Core matrix runs (§5.3 priorities 1–2) | All registry rows filled w/ config hashes |
 | P5 | Analysis, significance testing, diagnostics plots | Tables/figures reproducible from scripts |

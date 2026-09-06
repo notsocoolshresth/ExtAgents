@@ -11,3 +11,4 @@ torch==2.7.0
 transformers==4.51.3
 wheel==0.45.1
 httpx>=0.24.0
+langchain-text-splitters>=1.1.0

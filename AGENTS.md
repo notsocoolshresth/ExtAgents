@@ -25,9 +25,10 @@
 
 | Component | Location | What it does |
 |---|---|---|
-| CLI entry | `main.py:9-21` | Args: `task` (`rag`/`en`/`zh`), `chunk_length` (**8000** default), `input_length` (**128000**), `context_length` (**32768**), model/API config |
+| CLI entry | `main.py:9-21` | Args: `task` (`rag`/`en`/`zh`), `chunk_length` (**8000** default), `input_length` (**128000**), `context_length` (**32768**), `--chunker` (**`legacy`** default), model/API config |
 | Tokenizer | `main.py:61` | Always `tiktoken` gpt-4o encoding for length accounting |
 | **Chunking (baseline)** | `src/utils.py:104-133` | `create_chunks`: encode → truncate to `input_length` → slice into fixed `chunk_length` token blocks → decode |
+| **Chunker selection** | `src/chunkers/` (new package) | Pluggable `create_chunks` strategies in per-strategy files: `legacy` (C0, byte-identical baseline) + `overlap` (C1, sliding-window overlap via LangChain `RecursiveCharacterTextSplitter`) + `recursive_paragraph` (C3); `chunkers.install(id)` hot-swaps `utils.create_chunks`, so `src/pipeline.py` stays untouched; chosen via `main.py --chunker <id>` |
 | Truncation manner | `src/pipeline.py:46` + `src/utils.py:68-87` | `"front"` for RAG, `"middle"` for En/Zh |
 | MAP stage | `src/pipeline.py:59-97` | Per-chunk LLM extraction; iterations > 1 prepend previously extracted info (`max_info_tokens = context_length − chunk_length − 1000`) |
 | Info scoring | `src/utils.py:136-165` | LLM returns `Score: X` (regex `Score:\s*(\d+)`); en/zh only; infinite retry on parse failure |
@@ -82,6 +83,19 @@ bash scripts/download_data.sh
 python main.py --task rag --output_dir results_rag --chunk_length 8000 \
     --input_length 128000 --api_url "$OPENAI_BASE_URL" --api_key "$OPENAI_API_KEY" \
     --model "gpt-4o-mini-2024-07-18" --num_workers 8
+
+# Generation (alternative: recursive-paragraph chunking, C3)
+python main.py --task rag --output_dir results_rag --chunker recursive_paragraph \
+    --chunk_length 8000 --input_length 128000 --api_url "$OPENAI_BASE_URL" \
+    --api_key "$OPENAI_API_KEY" --model "gpt-4o-mini-2024-07-18" --num_workers 8
+
+# Generation (alternative: sliding-window overlap chunking, C1)
+python main.py --task rag --output_dir results_rag --chunker overlap \
+    --chunk_length 8000 --input_length 128000 --api_url "$OPENAI_BASE_URL" \
+    --api_key "$OPENAI_API_KEY" --model "gpt-4o-mini-2024-07-18" --num_workers 8
+
+# Unit tests
+venv\Scripts\python.exe -m unittest discover -s tests
 
 # Evaluation
 bash scripts/eval_rag.sh results_rag   # HotpotQA EM/F1

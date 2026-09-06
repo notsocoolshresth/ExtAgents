@@ -84,3 +84,75 @@
 - **Open questions / handoff**:
   1. Optional follow-up (needs owner approval, touches non-eval script): skip the `longbook_qa_chn.jsonl` download in `scripts/download_data.sh` to save bandwidth — currently left untouched for baseline integrity.
   2. Standing items from Entries 001–002 still apply (model lock-in before P3; commit-vs-revert decision on local-model adaptations).
+
+## [2026-08-28] Entry 005 — P2 chunker infrastructure: `src/chunkers.py` + `--chunker` flag + tests; venv provisioned
+
+- **Agent/model**: ox-alpha (opencode CLI)
+- **Scope read**: AGENTS.md ☑ ; session-log last 3 ☑ ; experiment-registry ☑ (no runs)
+- **Actions**:
+  - Provisioned `venv/` (Python 3.11.0, `python -m venv venv`) and `venv\Scripts\python.exe -m pip install -r requirements.txt` — all pins cleanly installed on win-amd64 (rouge_score built from sdist).
+  - Created `src/chunkers.py`: decorator-based registry (`register`/`get`/`available`/`install`/`restore`); two strategies — `legacy` (C0, delegates to a **frozen import-time reference** of `utils.create_chunks`) and `recursive_paragraph` (C3, paragraph → sentence → word → fixed-token-slice recursion, English-only, with re-encode + clamp to `chunk_length` budget).
+  - `main.py` (additive only): `--chunker` arg (default `legacy`), `chunkers.install(args.chunker)` right after arg parse, `Chunker:` in the startup print. **`src/pipeline.py` and `src/utils.py` untouched** — pipeline resolves `utils.create_chunks` dynamically per example (`src/pipeline.py:47`), which is exactly why the hot-swap works.
+  - Added `tests/test_chunkers.py`: 18 stdlib-`unittest` cases — legacy byte-identity (stub + real tiktoken gpt-4o), C3 paragraph integrity/order, token-budget enforcement across sizes, recursion-chain fallbacks, manner truncation, empty/bad inputs, install/restore semantics. All pass: `venv\Scripts\python.exe -m unittest discover -s tests`.
+  - Docs: AGENTS.md architecture map + CLI row + common-commands updated; research-plan §4/§P2 marked implemented.
+- **Decisions & rationale**:
+  - **Runner untouched via hot-swap, not CLI branching**: registry swap of `utils.create_chunks` keeps `src/pipeline.py` byte-identical (owner requirement) and works under the existing thread pool (swap happens before workers start).
+  - **Legacy delegates to a capt-logged original** (`_BASELINE_CREATE_CHUNKS = _utils.create_chunks` at import) rather than the mutable attribute, so install/reinstall/restore cannot recurse or self-reference.
+  - **C3 token accounting**: content is truncated exactly like the baseline (`utils.truncate_input`), then decoded before structural splitting; every assembled chunk is re-encoded and clamped to `chunk_length`, so the MAP stage never receives an oversized chunk even when BPE join-boundaries shift counts.
+  - Test stub tokenizer preserves whitespace runs (token regex `\S+|\s+`) because an initial naive `split()`/`join()` collapsed the `\n\n` paragraph separators, hiding a real C3 path — this also mirrors tiktoken's whitespace-preserving behavior.
+  - Only C0 + C3 shipped in this pass; C1/C4/C5 = one `@register` function each via the same interface (future sessions).
+  - Minor log correction: Entries 003–004 were stamped 2026-08-25 but were written 2026-08-28; treated as cosmetic, not re-edited (append-only).
+- **Expected effects / verification plan**:
+  - `venv\Scripts\python.exe -m unittest discover -s tests` → 18 OK (write this into AGENTS.md §6, done).
+  - `git diff --stat` should touch only `main.py`, `src/chunkers.py` (new), `tests/test_chunkers.py` (new), `AGENTS.md`, `docs/` — **not** `src/pipeline.py`, `src/utils.py`, eval scripts.
+  - P3 gate: run `--chunker legacy` on a small sample and diff `final_preds.jsonl` against a pre-change run to confirm byte-identical baseline behavior end-to-end.
+- **Open questions / handoff**:
+  1. `venv/` is gitignored (already in `.gitignore`) — no commit concern.
+  2. Next chunker candidates: implement C1 (overlap) next — it is the cheapest non-legacy addition and needed for H2 cost-asymmetry runs; note the run_id convention already supports `C1`.
+  3. Standing items from Entries 001–002: lock the primary model + API endpoint before P3; decide commit-vs-revert on the local-model adaptations in `main.py`/`src/utils.py`/`src/pipeline.py`.
+
+## [2026-08-28] Entry 006 — Plan mode decisions + Codex handoff doc authored
+
+- **Agent/model**: ox-alpha (opencode CLI)
+- **Scope read**: AGENTS.md ☑ ; session-log last 3 ☑ ; experiment-registry ☑ (no runs yet)
+- **Actions**:
+  - Plan mode session: inspected repo state (data/ empty, no .env, results_rag empty dir, Ollama up with qwen3.5:0.8b, En.QA eval labels come from the preds file itself at `compute_scores_partial-enhanced.py:379-384`).
+  - Captured owner decisions via Q&A: (1) materialize legacy chunker as **`src/chunkers/` package** (one file per strategy), (2) run target **En.QA**, (3) model **local Ollama qwen3.5:0.8b**, (4) **no dataset download — create self-made sample data**.
+  - **Authored `CODEX_HANDOFF.md`** (repo root): self-contained execution brief for an external Codex agent — environment facts, hot-swap integration contract, package refactor spec (incl. circular-import pattern + byte-identity requirement), sample-data spec, run + eval commands with known quirks (TASK_TO_INDICES subset → 7 of 10 ids scored; rouge metric fetch risk), recording protocol, hard rules, acceptance criteria.
+  - No source changes this session beyond what Entry 005 already recorded (main.py, src/chunkers.py, tests/).
+- **Decisions & rationale**:
+  - Offload to Codex chosen by owner; the handoff doc must carry ALL context because the external agent lacks AGENTS.md-embedded history — hence it is written to be executed top-to-bottom without conversation.
+  - Refactor stays behavior-preserving: `from src import chunkers` must keep working, default `--chunker legacy` byte-identical (identity tests are the guard), runner/utils/eval untouched.
+  - Sample set is explicitly **non-comparable to official InfiniteBench numbers** (self-made, 10 examples); its purpose is the functional P3 gate + baseline artifact.
+  - Eval quirk recorded so the Codex agent does not "fix" the frozen script when only 7/10 ids are scored.
+- **Expected effects / verification plan**: handoff doc at repo root; a Codex agent following it should produce the package refactor + sample data + a `results_en_sample/final_preds.jsonl` run + eval + registry/session-log records. Verify: 18 tests pass, git status shows no changes to pipeline/utils/eval, entry 007 + registry row present afterwards.
+- **Open questions / handoff**:
+  1. Whether to also produce a `recursive_paragraph` comparison run on the same sample (optional demo of the swap mechanism) — not in the handoff deliverable.
+  2. Standing: model/endpoint lock-in before P3 (primary model still undecided for real benchmark arms); commit-vs-revert on local-model adaptations.
+
+## [2026-09-06] Entry 007 — C1 overlap chunker implemented (LangChain-backed)
+
+- **Agent/model**: opencode/mimo-v2.5-free
+- **Scope read**: AGENTS.md ☑ ; session-log last 3 ☑ ; experiment-registry ☑ (no runs)
+- **Actions**:
+  - Installed `langchain-text-splitters>=1.1.0` (+ transitive deps: langchain-core, langsmith, etc.) into venv; added to `requirements.txt`.
+  - Created `src/chunkers/overlap.py`: C1 sliding-window overlap chunker wrapping LangChain's `RecursiveCharacterTextSplitter` with a custom `length_function` backed by the pipeline's tiktoken tokenizer. Key parameter: `overlap_ratio` (default 0.5). Includes final clamping pass for LangChain edge-case trailing chunks.
+  - Updated `src/chunkers/__init__.py` (line 64): added `overlap` to the import list.
+  - Added 14 tests to `tests/test_chunkers.py`: `TestOverlap` (10 cases, WordTokenizer) + `TestOverlapRealTokens` (2 cases, tiktoken gpt-4o). Covers budget enforcement, overlap count > legacy, content coverage, boundary-straddling evidence recovery, overlap_ratio=0 edge case, manner truncation, invalid params, empty input. Updated `TestRegistryAndInstall.test_available` to include `"overlap"`.
+  - Updated `AGENTS.md`: architecture map row for chunker selection now lists all three strategies; added overlap CLI example in §6.
+  - Updated `docs/research/research-plan.md` §P2: overlap marked implemented.
+  - All 30 tests pass: `venv\Scripts\python.exe -m unittest tests.test_chunkers -v`.
+- **Decisions & rationale**:
+  - **LangChain wrapper over raw implementation**: `RecursiveCharacterTextSplitter` provides battle-tested separator-aware splitting with token-level overlap, avoiding a hand-rolled sliding window that would need its own separator heuristics. The custom `length_function` ensures token accounting uses our exact tiktoken gpt-4o encoding.
+  - **overlap_ratio parameter**: Defaults to 0.5 (matches research plan H2: "50% overlap"). Exposed as a function argument so ablation sweeps (0.0, 0.25, 0.5, 0.75) can be run without code changes.
+  - **Final clamping pass**: LangChain may produce a trailing chunk slightly over `chunk_length` due to separator accounting. The explicit clamp ensures the MAP stage never receives oversized input.
+  - **No pipeline changes**: hot-swap mechanism (`chunkers.install("overlap")`) works identically to legacy/recursive_paragraph; `src/pipeline.py` and `src/utils.py` untouched.
+- **Expected effects / verification plan**:
+  - `--chunker overlap` produces ~2x chunks vs `--chunker legacy` at default overlap_ratio=0.5; verify via run logs.
+  - Each chunk is ≤ chunk_length tokens; verify via test assertions.
+  - Boundary-spanning evidence recovered (test `test_boundary_straddling_evidence_recovered`).
+  - P3 gate: run `--chunker legacy` vs `--chunker overlap` on sample data and diff outputs.
+- **Open questions / handoff**:
+  1. Next candidates: C4 (semantic) and C5 (document-structure) still unimplemented.
+  2. The `overlap_ratio` ablation (varying 0.0–0.75) is a natural follow-up to H2 testing.
+  3. Standing: model/endpoint lock-in before P3; commit-vs-revert on local-model adaptations.
