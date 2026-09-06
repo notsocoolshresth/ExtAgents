@@ -116,7 +116,7 @@ Diagnostics (for analysis sections):
 | Phase | Work | Exit criteria |
 |---|---|---|
 | P1 ✅ | Knowledge base (this doc set) | Done |
-| P2 ⏳ | Literature review notes; `src/chunkers.py` behind CLI flag (default legacy) — **implemented (legacy + overlap + recursive_paragraph + tests)**; logging of call counts/tokens; optional linter/type-check proposal | Baseline byte-identical outputs vs pre-change run on small sample |
+| P2 ⏳ | Literature review notes; `src/chunkers.py` behind CLI flag (default legacy) — **implemented (legacy + overlap + recursive_paragraph + semantic + tests)**; logging of call counts/tokens; optional linter/type-check proposal | Baseline byte-identical outputs vs pre-change run on small sample |
 | P3 | Baseline reproduction runs (C0) on all tasks; registry rows complete | Numbers stable & recorded; compare with published ExtAgents numbers |
 | P4 | Core matrix runs (§5.3 priorities 1–2) | All registry rows filled w/ config hashes |
 | P5 | Analysis, significance testing, diagnostics plots | Tables/figures reproducible from scripts |

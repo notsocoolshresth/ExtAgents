@@ -156,3 +156,29 @@
   1. Next candidates: C4 (semantic) and C5 (document-structure) still unimplemented.
   2. The `overlap_ratio` ablation (varying 0.0–0.75) is a natural follow-up to H2 testing.
   3. Standing: model/endpoint lock-in before P3; commit-vs-revert on local-model adaptations.
+
+## [2026-09-06] Entry 008 — C4 semantic chunker implemented (LangChain SemanticChunker)
+
+- **Agent/model**: opencode/mimo-v2.5-free
+- **Scope read**: AGENTS.md ☑ ; session-log last 3 ☑ ; experiment-registry ☑ (no runs)
+- **Actions**:
+  - Installed `langchain-experimental>=0.4.0`, `langchain-huggingface>=1.2.0`, `sentence-transformers>=5.7.0` into venv; added to `requirements.txt`.
+  - Created `src/chunkers/semantic.py`: C4 semantic breakpoint chunker wrapping LangChain's `SemanticChunker` with lazy-loaded `HuggingFaceEmbeddings` (default: `all-MiniLM-L6-v2`). Two-phase approach: (1) semantic splitting via cosine-distance breakpoints, (2) budget enforcement via `RecursiveCharacterTextSplitter` for oversized chunks + tiny-chunk merging.
+  - Updated `src/chunkers/__init__.py`: added `semantic` to imports.
+  - Added 9 tests to `tests/test_chunkers.py`: `TestSemantic` (8 cases, mocked embedder) + `TestSemanticRealTokens` (1 case, real model). Covers sentence splitting, budget enforcement, oversized chunk splitting, tiny chunk merging, manner truncation, error handling. Updated `TestRegistryAndInstall.test_available` to include `"semantic"`.
+  - Updated `AGENTS.md`: architecture map + CLI example for `--chunker semantic`.
+  - Updated `docs/research/research-plan.md` §P2: semantic marked implemented.
+  - All 39 tests pass.
+- **Decisions & rationale**:
+  - **Two-phase design**: `SemanticChunker` has no `chunk_size` parameter — it splits purely by semantic distance. Phase 2 (budget enforcement) is necessary because the MAP stage's `max_info_tokens` calculation assumes chunks ≤ `chunk_length`. This is a pragmatic compromise: some semantic coherence may be lost in the split, but correctness is preserved.
+  - **Lazy embedder loading**: `sentence-transformers` downloads ~80MB model on first use. Caching in `_embedder_cache` dict avoids re-loading per call. Module-level import with `try/except ImportError` gives a clear error if deps are missing.
+  - **Tiny-chunk merging**: Chunks < 10% of `chunk_length` tokens are merged into neighbors to avoid degenerate single-sentence chunks that waste MAP-stage API calls.
+  - **Embedding model as ablation knob**: `embedder_model` parameter allows swapping models (e.g., `all-mpnet-base-v2`, OpenAI embeddings) without code changes — directly addresses research plan §7 threat about embedding model confound.
+- **Expected effects / verification plan**:
+  - `--chunker semantic` produces variable-sized chunks that respect semantic boundaries; verify via run logs that chunk count is between legacy and overlap.
+  - Budget enforcement: every chunk ≤ `chunk_length` tokens; verify via test assertions.
+  - P3 gate: run `--chunker semantic` on sample data and compare info scores with legacy.
+- **Open questions / handoff**:
+  1. C5 (document-structure aware) is the last unimplemented candidate.
+  2. Embedding model ablation (≥2 embedders per research plan §7) should be part of P4 core matrix.
+  3. Standing: model/endpoint lock-in before P3; commit-vs-revert on local-model adaptations.

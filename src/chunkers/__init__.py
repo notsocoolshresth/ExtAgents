@@ -61,4 +61,4 @@ def restore() -> None:
     _utils.create_chunks = _BASELINE_CREATE_CHUNKS
 
 
-from . import legacy, overlap, recursive_paragraph  # noqa: E402,F401
+from . import legacy, overlap, recursive_paragraph, semantic  # noqa: E402,F401

@@ -334,6 +334,124 @@ class TestOverlapRealTokens(RealTokenizerTestCase):
         self.assertGreater(len(overlap_chunks), len(legacy_chunks))
 
 
+class TestSemantic(unittest.TestCase):
+    """Tests for C4 semantic chunking (mocked embedder — no model download needed)."""
+
+    def setUp(self):
+        self.tok = WordTokenizer()
+
+    def _mock_semantic_chunks(self, text, chunk_length, input_length=100000, manner="front"):
+        """Call semantic_chunks with a mocked SemanticChunker.split_text."""
+        from unittest.mock import patch, MagicMock
+
+        def _split_like_semantic(t):
+            """Split text on whitespace (simulates sentence-level splitting)."""
+            import re
+            parts = re.split(r"\s+", t)
+            return [p for p in parts if p.strip()]
+
+        with patch("src.chunkers.semantic.SemanticChunker") as MockSC:
+            mock_instance = MagicMock()
+            mock_instance.split_text.side_effect = _split_like_semantic
+            MockSC.return_value = mock_instance
+
+            with patch("src.chunkers.semantic._get_embedder", return_value=MagicMock()):
+                return chunkers.get("semantic")(
+                    self.tok, text, chunk_length, input_length, manner
+                )
+
+    def test_basic_sentence_splitting(self):
+        context = "First sentence here. Second sentence here. Third sentence here."
+        chunks = self._mock_semantic_chunks(context, 100)
+        self.assertTrue(chunks)
+        flat = " ".join(chunks)
+        self.assertIn("First", flat)
+        self.assertIn("Third", flat)
+
+    def test_budget_enforced(self):
+        context = ("Short sentence. " * 50).strip()
+        chunks = self._mock_semantic_chunks(context, 10)
+        self.assertTrue(chunks)
+        for c in chunks:
+            self.assertLessEqual(len(self.tok.encode(c)), 10)
+
+    def test_oversized_chunk_gets_split(self):
+        context = "A very long sentence that goes on and on. " * 20
+        chunks = self._mock_semantic_chunks(context, 15)
+        self.assertGreater(len(chunks), 1)
+        for c in chunks:
+            self.assertLessEqual(len(self.tok.encode(c)), 15)
+
+    def test_tiny_chunks_get_merged(self):
+        """Chunks under 10% of budget should be merged into neighbors."""
+        from unittest.mock import patch, MagicMock
+
+        normal_a = "This is a normal chunk with enough tokens. " * 3
+        tiny = "Hi."
+        normal_b = "This is another normal chunk with enough tokens. " * 3
+
+        with patch("src.chunkers.semantic.SemanticChunker") as MockSC:
+            mock_instance = MagicMock()
+            mock_instance.split_text.return_value = [normal_a, tiny, normal_b]
+            MockSC.return_value = mock_instance
+            with patch("src.chunkers.semantic._get_embedder", return_value=MagicMock()):
+                chunks = chunkers.get("semantic")(
+                    self.tok, "unused", 200, 100000, "front"
+                )
+        # The tiny chunk should be merged (not be a separate chunk)
+        self.assertLessEqual(len(chunks), 2)
+
+    def test_empty_context(self):
+        self.assertEqual(
+            chunkers.get("semantic")(self.tok, "", 100, 100, "front"), []
+        )
+
+    def test_nonpositive_chunk_length_raises(self):
+        with self.assertRaises(ValueError):
+            chunkers.get("semantic")(self.tok, "x", 0, 100, "front")
+
+    def test_manner_front_truncates_tail(self):
+        words = [f"w{i}" for i in range(200)]
+        context = " ".join(words)
+        chunks = self._mock_semantic_chunks(context, 500, 100, "front")
+        flat = set(w for c in chunks for w in self.tok.encode(c))
+        self.assertIn("w0", flat)
+        self.assertNotIn("w150", flat)
+
+    def test_manner_middle_keeps_head_and_tail(self):
+        words = [f"w{i}" for i in range(200)]
+        context = " ".join(words)
+        chunks = self._mock_semantic_chunks(context, 500, 100, "middle")
+        flat = set(w for c in chunks for w in self.tok.encode(c))
+        self.assertIn("w0", flat)
+        self.assertIn("w199", flat)
+
+
+class TestSemanticRealTokens(RealTokenizerTestCase):
+    """Integration test — requires sentence-transformers model download."""
+
+    def test_budget_enforced_with_real_tokenizer(self):
+        try:
+            import sentence_transformers  # noqa: F401
+        except ImportError:
+            raise unittest.SkipTest("sentence-transformers not installed")
+
+        context = (
+            "The quick brown fox jumps over the lazy dog. "
+            * 30
+        ) + "\n\n" + (
+            "A different paragraph about something else entirely. "
+            * 30
+        )
+        cl = 200
+        chunks = chunkers.get("semantic")(
+            self.tokenizer, context, cl, 200000, "middle"
+        )
+        self.assertTrue(chunks)
+        for c in chunks:
+            self.assertLessEqual(len(self.tokenizer.encode(c)), cl)
+
+
 class TestRegistryAndInstall(unittest.TestCase):
     def setUp(self):
         chunkers.restore()
@@ -341,7 +459,8 @@ class TestRegistryAndInstall(unittest.TestCase):
 
     def test_available(self):
         self.assertEqual(
-            chunkers.available(), ["legacy", "overlap", "recursive_paragraph"]
+            chunkers.available(),
+            ["legacy", "overlap", "recursive_paragraph", "semantic"],
         )
 
     def test_unknown_chunker_raises(self):
