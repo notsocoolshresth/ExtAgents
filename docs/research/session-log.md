@@ -182,3 +182,30 @@
   1. C5 (document-structure aware) is the last unimplemented candidate.
   2. Embedding model ablation (≥2 embedders per research plan §7) should be part of P4 core matrix.
   3. Standing: model/endpoint lock-in before P3; commit-vs-revert on local-model adaptations.
+
+## [2026-09-09] Entry 009 — C5 document-structure-aware chunker implemented
+
+- **Agent/model**: azure/kimi-k2.7-code
+- **Scope read**: AGENTS.md ☑ ; session-log last 3 ☑ ; experiment-registry ☑ (no runs)
+- **Actions**:
+  - Created `src/chunkers/document_structure.py`: C5 document-structure-aware chunker. Detects chapter headings (`Chapter N`/`CHAPTER N`), part headings (`PART ONE`/`Part Two`/`PART I`), standalone Roman numerals, ALL-CAPS lines, date headings (`MONDAY, JANUARY 1, 2024`), and asterisk separator lines (`* * * * *`). Splits at detected line-matched boundaries; packs structural sections greedily; recursively splits oversized sections via C3's paragraph→sentence→word→token-slice recursion; merges tiny sections into neighbours. When no markers are found, falls back to C3 (`recursive_paragraph_chunks`) so structureless RAG data never degrades below paragraph-aware splitting.
+  - Registered `document_structure` in `src/chunkers/__init__.py`.
+  - Added 14 tests to `tests/test_chunkers.py`: `TestDocumentStructure` (13 cases, WordTokenizer) + `TestDocumentStructureRealTokens` (1 case, tiktoken gpt-4o). Covers chapter, ALL-CAPS, Roman-numeral, asterisk, date, and part headings; no-marker C3 fallback; oversized-section splitting; tiny-section merging; manner truncation (`front`/`middle`); empty input; invalid params; real-tokenizer budget enforcement. Updated `TestRegistryAndInstall.test_available` to include `"document_structure"`.
+  - Updated `AGENTS.md`: architecture map row now lists all five chunkers (C0–C5); added C5 CLI example in §6.
+  - Updated `docs/research/research-plan.md` §P2: marked complete with all five candidates implemented.
+  - All 53 tests pass: `venv\Scripts\python.exe -m unittest tests.test_chunkers -v` (39 existing + 14 new).
+- **Decisions & rationale**:
+  - **Line-matched regex markers**: each marker is applied via `fullmatch` against a stripped line. This is simple, fast, and interpretable — directly matches the research-plan C5 definition and avoids bringing in a heavy document-parsing dependency.
+  - **C3 fallback on zero markers**: counting detected marker lines separately from boundary offsets prevents false fallback when a marker appears at the very start or end of the text (where its boundary offset coincides with 0 or `len(text)`).
+  - **Title-cased part words**: extended the `PART`/`Part` regex to match `(?i:ONE|TWO|...)` so common book forms like "Part Two" are detected alongside "PART ONE".
+  - **Reused C3 `_pack_units` for structural sections**: avoids duplicating recursion logic and guarantees identical paragraph/sentence/word fallback behavior for oversized sections.
+  - **No pipeline changes**: C5 is selected exactly like the other chunkers via `chunkers.install("document_structure")`; `src/pipeline.py` and `src/utils.py` remain untouched.
+- **Expected effects / verification plan**:
+  - `chunkers.available()` returns `["document_structure", "legacy", "overlap", "recursive_paragraph", "semantic"]`.
+  - `--chunker document_structure` is selectable from `main.py`.
+  - Every test chunk is ≤ `chunk_length` tokens.
+  - P3 gate: run `--chunker document_structure` on sample data and confirm it produces expected structural chunks; compare with C3 fallback on structureless text.
+- **Open questions / handoff**:
+  1. **P3 baseline reproduction** is the next phase. Run C0 on the chosen sample/official data, record the first registry row.
+  2. Standing: primary model/endpoint lock-in before real benchmark arms; commit-vs-revert decision on local-model adaptations in `main.py`/`src/utils.py`/`src/pipeline.py`.
+  3. The C5 marker set is English-only and regex-based; if P4 results show marker misses on En.QA books, consider adding heading-underline patterns (e.g., `=====`) or Markdown `#` headers.

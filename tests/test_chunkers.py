@@ -452,6 +452,188 @@ class TestSemanticRealTokens(RealTokenizerTestCase):
             self.assertLessEqual(len(self.tokenizer.encode(c)), cl)
 
 
+class TestDocumentStructure(unittest.TestCase):
+    """Tests for C5 document-structure-aware chunking."""
+
+    def setUp(self):
+        self.tok = WordTokenizer()
+
+    def _section(self, label, repeats=15):
+        """Build a token-countable section with a clear label word."""
+        return " ".join(f"{label}{i}" for i in range(repeats))
+
+    def test_chapter_markers_detected(self):
+        context = (
+            self._section("pre", 12)
+            + "\n\nChapter 1\n\n"
+            + self._section("ch1", 12)
+        )
+        chunks = chunkers.get("document_structure")(
+            self.tok, context, 30, 10000, "front"
+        )
+        self.assertTrue(chunks)
+        for c in chunks:
+            self.assertLessEqual(len(self.tok.encode(c)), 30)
+        # The chapter marker should begin a chunk.
+        self.assertTrue(
+            any(c.strip().startswith("Chapter 1") for c in chunks),
+            f"no chunk starts with chapter marker: {chunks!r}",
+        )
+
+    def test_all_caps_lines_detected(self):
+        context = (
+            self._section("pre", 12)
+            + "\n\nTHE BEGINNING\n\n"
+            + self._section("mid", 12)
+        )
+        chunks = chunkers.get("document_structure")(
+            self.tok, context, 30, 10000, "front"
+        )
+        self.assertTrue(
+            any(c.strip().startswith("THE BEGINNING") for c in chunks),
+            f"ALL-CAPS heading not a boundary: {chunks!r}",
+        )
+
+    def test_roman_numerals_detected(self):
+        context = (
+            self._section("pre", 12)
+            + "\n\nXII\n\n"
+            + self._section("mid", 12)
+        )
+        chunks = chunkers.get("document_structure")(
+            self.tok, context, 30, 10000, "front"
+        )
+        self.assertTrue(
+            any(c.strip().startswith("XII") for c in chunks),
+            f"Roman numeral not a boundary: {chunks!r}",
+        )
+
+    def test_asterisk_separator_detected(self):
+        context = (
+            self._section("pre", 12)
+            + "\n\n* * * * *\n\n"
+            + self._section("post", 12)
+        )
+        chunks = chunkers.get("document_structure")(
+            self.tok, context, 30, 10000, "front"
+        )
+        self.assertTrue(
+            any(c.strip().startswith("* * * * *") for c in chunks),
+            f"asterisk separator not a boundary: {chunks!r}",
+        )
+
+    def test_date_heading_detected(self):
+        context = (
+            self._section("pre", 12)
+            + "\n\nMONDAY, JANUARY 1, 2024\n\n"
+            + self._section("post", 12)
+        )
+        chunks = chunkers.get("document_structure")(
+            self.tok, context, 30, 10000, "front"
+        )
+        self.assertTrue(
+            any("MONDAY, JANUARY 1, 2024" in c for c in chunks),
+            f"date heading not detected: {chunks!r}",
+        )
+
+    def test_part_heading_detected(self):
+        context = (
+            self._section("pre", 12)
+            + "\n\nPart Two\n\n"
+            + self._section("post", 12)
+        )
+        chunks = chunkers.get("document_structure")(
+            self.tok, context, 30, 10000, "front"
+        )
+        self.assertTrue(
+            any(c.strip().startswith("Part Two") for c in chunks),
+            f"Part heading not a boundary: {chunks!r}",
+        )
+
+    def test_no_markers_falls_back_to_recursive_paragraph(self):
+        """Structureless text should behave like C3."""
+        context = "one two three four\n\nfive six seven eight"
+        c5 = chunkers.get("document_structure")(
+            self.tok, context, 3, 100, "front"
+        )
+        c3 = chunkers.get("recursive_paragraph")(
+            self.tok, context, 3, 100, "front"
+        )
+        self.assertEqual(c5, c3)
+
+    def test_oversized_section_gets_split(self):
+        context = "Chapter 1\n\n" + self._section("big", 200)
+        chunks = chunkers.get("document_structure")(
+            self.tok, context, 50, 10000, "front"
+        )
+        self.assertGreater(len(chunks), 1)
+        for c in chunks:
+            self.assertLessEqual(len(self.tok.encode(c)), 50)
+
+    def test_tiny_sections_merge_into_neighbors(self):
+        context = (
+            "Chapter 1\n\n"
+            + self._section("a", 5)
+            + "\n\nChapter 2\n\n"
+            + self._section("b", 5)
+        )
+        chunks = chunkers.get("document_structure")(
+            self.tok, context, 100, 10000, "front"
+        )
+        # With a large budget, two tiny chapters should fit in one chunk.
+        self.assertEqual(len(chunks), 1)
+        self.assertIn("Chapter 1", chunks[0])
+        self.assertIn("Chapter 2", chunks[0])
+
+    def test_manner_front_truncates_tail(self):
+        words = [f"w{i}" for i in range(200)]
+        context = " ".join(words)
+        chunks = chunkers.get("document_structure")(
+            self.tok, context, 500, 100, "front"
+        )
+        flat = set(w for c in chunks for w in self.tok.encode(c))
+        self.assertIn("w0", flat)
+        self.assertNotIn("w150", flat)
+
+    def test_manner_middle_keeps_head_and_tail(self):
+        words = [f"w{i}" for i in range(200)]
+        context = " ".join(words)
+        chunks = chunkers.get("document_structure")(
+            self.tok, context, 500, 100, "middle"
+        )
+        flat = set(w for c in chunks for w in self.tok.encode(c))
+        self.assertIn("w0", flat)
+        self.assertIn("w199", flat)
+
+    def test_empty_context(self):
+        self.assertEqual(
+            chunkers.get("document_structure")(self.tok, "", 100, 100, "front"),
+            [],
+        )
+
+    def test_nonpositive_chunk_length_raises(self):
+        with self.assertRaises(ValueError):
+            chunkers.get("document_structure")(self.tok, "x", 0, 100, "front")
+
+
+class TestDocumentStructureRealTokens(RealTokenizerTestCase):
+    def test_budget_enforced_with_real_tokenizer(self):
+        context = (
+            "Chapter 1\n\n"
+            + ("The quick brown fox jumps over the lazy dog. " * 40)
+            + "\n\nChapter 2\n\n"
+            + ("Another paragraph containing several English sentences. " * 40)
+        )
+        for cl in (100, 250, 500, 1000):
+            with self.subTest(cl=cl):
+                chunks = chunkers.get("document_structure")(
+                    self.tokenizer, context, cl, 200000, "middle"
+                )
+                self.assertTrue(chunks)
+                for c in chunks:
+                    self.assertLessEqual(len(self.tokenizer.encode(c)), cl)
+
+
 class TestRegistryAndInstall(unittest.TestCase):
     def setUp(self):
         chunkers.restore()
@@ -460,7 +642,7 @@ class TestRegistryAndInstall(unittest.TestCase):
     def test_available(self):
         self.assertEqual(
             chunkers.available(),
-            ["legacy", "overlap", "recursive_paragraph", "semantic"],
+            ["document_structure", "legacy", "overlap", "recursive_paragraph", "semantic"],
         )
 
     def test_unknown_chunker_raises(self):
