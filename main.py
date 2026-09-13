@@ -15,7 +15,7 @@ def parse_args():
     parser.add_argument("--input_length", type=int, default=128000)
     parser.add_argument("--api_url", type=str, default="http://localhost:11434/v1")
     parser.add_argument("--api_key", type=str, default="ollama")
-    parser.add_argument("--model", type=str, default="qwen3.5:0.8b")
+    parser.add_argument("--model", type=str, default="llama3.1:8b")
     parser.add_argument("--num_workers", type=int, default=1)
     parser.add_argument("--context_length", type=int, default=32768)
     parser.add_argument("--data_path", type=str, default=None)

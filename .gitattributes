@@ -1,0 +1,27 @@
+# Normalize all text files to LF line endings on checkout.
+# This prevents cross-platform CRLF/LF noise in git status and ensures
+# shell scripts created on Windows remain executable on Linux/macOS.
+
+*       text=auto eol=lf
+*.sh    text eol=lf
+*.py    text eol=lf
+*.md    text eol=lf
+*.txt   text eol=lf
+*.json  text eol=lf
+*.jsonl text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
+*.toml  text eol=lf
+*.cfg   text eol=lf
+
+# Binary files should not be touched.
+*.gguf  binary
+*.bin   binary
+*.safetensors binary
+*.pt    binary
+*.pth   binary
+*.ckpt  binary
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.pdf   binary

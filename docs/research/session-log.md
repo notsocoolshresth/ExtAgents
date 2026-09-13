@@ -259,3 +259,28 @@
   2. Heterogeneous mode (3B seeker + 8B reasoner) is not yet wired into the pipeline; a future session can add dual-client support if the user wants to reproduce Table 6 exactly.
   3. If V100 32 GB runs out of context at 131072 tokens, reduce `--ctx-size` to 65536 or 32768; ExtAgents chunks already fit within those windows.
 
+## [2026-09-13] Entry 013 — Switched local inference path to Ollama 0.5.1 (GPU works)
+
+- **Agent/model**: azure/kimi-k2.7-code
+- **Scope read**: AGENTS.md ☑ ; session-log last 3 ☑ ; experiment-registry ☑ (no runs)
+- **Actions**:
+  - User confirmed Ollama 0.5.1 is installed and running on GPU, making the llama.cpp/CUDA-11.4 workaround unnecessary.
+  - Deleted the now-unnecessary scripts: `scripts/delete_local_models.py`, `scripts/download_gguf_models.py`, `scripts/download_local_models.py`, `scripts/run_llama_cpp_server.sh`, `scripts/setup_llama_cpp_cuda114.sh`.
+  - Created `scripts/setup_ollama_models.sh`: pulls `llama3.1:8b` (paper's homogeneous local model) and `llama3.2:3b` (paper's efficient Seeking Agent).
+  - Created `scripts/run_extagents_ollama.sh`: convenience wrapper that validates the Ollama endpoint and model, then invokes `main.py` with `--api_url http://localhost:11434/v1 --api_key ollama --model llama3.1:8b` and the chosen task/chunker.
+  - Created `scripts/delete_ollama_models.sh`: removes `llama3.1:8b` and `llama3.2:3b` from Ollama.
+  - Edited `main.py:18`: changed default `--model` from `qwen3.5:0.8b` to `llama3.1:8b`, matching the paper's local baseline and the new Ollama workflow.
+- **Decisions & rationale**:
+  - Ollama already works on the user's GPU/driver/CUDA combo, so compiling llama.cpp against a user-space CUDA 11.4 toolkit is pure overhead and risk.
+  - Removed rather than archived the non-Ollama scripts to keep the repo clean; they are documented in prior session-log entries and can be recovered from git history if ever needed.
+  - Defaulted to the homogeneous 8B setup because the current pipeline uses a single OpenAI-compatible client. The 3B model is still pulled so the user can manually run a second Ollama instance for heterogeneous experiments; wiring two endpoints into the pipeline is deferred.
+  - Kept `scripts/eval_*.sh`, `scripts/download_data.sh`, and upstream `eval_zh.sh` untouched per AGENTS.md hard rules #2 and #3.
+- **Expected effects / verification plan**:
+  - `bash scripts/setup_ollama_models.sh` should pull both tags and `ollama list` should show `llama3.1:8b` and `llama3.2:3b`.
+  - With `ollama serve` running, `bash scripts/run_extagents_ollama.sh` should start `main.py` and hit `http://localhost:11434/v1`.
+  - `bash scripts/delete_ollama_models.sh` should remove both tags.
+  - No unit-test impact; run `python -m unittest discover -s tests` to confirm.
+- **Open questions / handoff**:
+  1. Heterogeneous mode (3B seeker + 8B reasoner on separate Ollama ports) still requires a code change to support two model clients in `src/utils.py`/`src/pipeline.py`. Implement only if the user wants to reproduce Table 6's mixed setup exactly.
+  2. Ollama model context size is configured server-side; if 32k context is not enough for a chosen `--input_length`, the user may need to set `OLLAMA_CONTEXT_LENGTH` before `ollama serve`.
+
