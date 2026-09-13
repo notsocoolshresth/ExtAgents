@@ -182,3 +182,80 @@
   1. C5 (document-structure aware) is the last unimplemented candidate.
   2. Embedding model ablation (≥2 embedders per research plan §7) should be part of P4 core matrix.
   3. Standing: model/endpoint lock-in before P3; commit-vs-revert on local-model adaptations.
+
+## [2026-09-09] Entry 009 — C5 document-structure-aware chunker implemented
+
+- **Agent/model**: azure/kimi-k2.7-code
+- **Scope read**: AGENTS.md ☑ ; session-log last 3 ☑ ; experiment-registry ☑ (no runs)
+- **Actions**:
+  - Created `src/chunkers/document_structure.py`: C5 document-structure-aware chunker. Detects chapter headings (`Chapter N`/`CHAPTER N`), part headings (`PART ONE`/`Part Two`/`PART I`), standalone Roman numerals, ALL-CAPS lines, date headings (`MONDAY, JANUARY 1, 2024`), and asterisk separator lines (`* * * * *`). Splits at detected line-matched boundaries; packs structural sections greedily; recursively splits oversized sections via C3's paragraph→sentence→word→token-slice recursion; merges tiny sections into neighbours. When no markers are found, falls back to C3 (`recursive_paragraph_chunks`) so structureless RAG data never degrades below paragraph-aware splitting.
+  - Registered `document_structure` in `src/chunkers/__init__.py`.
+  - Added 14 tests to `tests/test_chunkers.py`: `TestDocumentStructure` (13 cases, WordTokenizer) + `TestDocumentStructureRealTokens` (1 case, tiktoken gpt-4o). Covers chapter, ALL-CAPS, Roman-numeral, asterisk, date, and part headings; no-marker C3 fallback; oversized-section splitting; tiny-section merging; manner truncation (`front`/`middle`); empty input; invalid params; real-tokenizer budget enforcement. Updated `TestRegistryAndInstall.test_available` to include `"document_structure"`.
+  - Updated `AGENTS.md`: architecture map row now lists all five chunkers (C0–C5); added C5 CLI example in §6.
+  - Updated `docs/research/research-plan.md` §P2: marked complete with all five candidates implemented.
+  - All 53 tests pass: `venv\Scripts\python.exe -m unittest tests.test_chunkers -v` (39 existing + 14 new).
+- **Decisions & rationale**:
+  - **Line-matched regex markers**: each marker is applied via `fullmatch` against a stripped line. This is simple, fast, and interpretable — directly matches the research-plan C5 definition and avoids bringing in a heavy document-parsing dependency.
+  - **C3 fallback on zero markers**: counting detected marker lines separately from boundary offsets prevents false fallback when a marker appears at the very start or end of the text (where its boundary offset coincides with 0 or `len(text)`).
+  - **Title-cased part words**: extended the `PART`/`Part` regex to match `(?i:ONE|TWO|...)` so common book forms like "Part Two" are detected alongside "PART ONE".
+  - **Reused C3 `_pack_units` for structural sections**: avoids duplicating recursion logic and guarantees identical paragraph/sentence/word fallback behavior for oversized sections.
+  - **No pipeline changes**: C5 is selected exactly like the other chunkers via `chunkers.install("document_structure")`; `src/pipeline.py` and `src/utils.py` remain untouched.
+- **Expected effects / verification plan**:
+  - `chunkers.available()` returns `["document_structure", "legacy", "overlap", "recursive_paragraph", "semantic"]`.
+  - `--chunker document_structure` is selectable from `main.py`.
+  - Every test chunk is ≤ `chunk_length` tokens.
+  - P3 gate: run `--chunker document_structure` on sample data and confirm it produces expected structural chunks; compare with C3 fallback on structureless text.
+- **Open questions / handoff**:
+  1. **P3 baseline reproduction** is the next phase. Run C0 on the chosen sample/official data, record the first registry row.
+  2. Standing: primary model/endpoint lock-in before real benchmark arms; commit-vs-revert decision on local-model adaptations in `main.py`/`src/utils.py`/`src/pipeline.py`.
+    3. The C5 marker set is English-only and regex-based; if P4 results show marker misses on En.QA books, consider adding heading-underline patterns (e.g., `=====`) or Markdown `#` headers.
+
+## [2026-09-13] Entry 010 — Researched paper models + added local model download/delete scripts
+
+- **Agent/model**: azure/kimi-k2.7-code
+- **Scope read**: AGENTS.md ☑ ; session-log last 3 ☑ ; experiment-registry ☑ (no runs)
+- **Actions**:
+  - Researched the ExtAgents paper (Liu et al., arXiv:2505.21471v2, ACL 2026) to identify the local models used for Seeking and Reasoning agents.
+  - Findings: primary open-source experiments use **Llama-3.1-8B-Instruct** for both roles (homogeneous). The paper also tests a heterogeneous configuration for efficiency: **Llama-3.2-3B-Instruct for Seeking Agents** and **Llama-3.1-8B-Instruct for the Reasoning Agent** (Section 5.2, Table 6; Appendix C.1). Closed-source experiments use `gpt-4o-mini-2024-07-18` and `gpt-4o-2024-08-06` via API.
+  - Created `scripts/download_local_models.py`: self-contained, CLI-driven downloader using `huggingface_hub.snapshot_download`. Supports `--models {all,reasoner,seeker,both_8b,both_3b}` and `--cache-dir ./models`. Defaults to fetching both the 8B reasoner and 3B seeker. Requires `HF_TOKEN` env var or `--token` because Llama weights are gated.
+  - Created `scripts/delete_local_models.py`: mirrors the downloader's model map, removes materialized weights under `--cache-dir`, and optionally purges matching repositories from the global Hugging Face cache with `--include-hf-cache`. Reports MiB freed.
+  - Documented the Tesla V100 / CUDA 11.2 compatibility issue in the docstrings: driver 460.91.03 supports only up to CUDA 11.4, while `requirements.txt` pins `torch==2.7.0` (needs CUDA ≥ 11.8 and driver ≥ 520). GPU inference with the stock environment will not work without a driver/CUDA upgrade or a CPU/CUDA-11.2-compatible backend (e.g., llama.cpp/ollama).
+- **Decisions & rationale**:
+  - Kept the scripts self-contained and independent of the core pipeline so they do not alter baseline behavior or experimental reproducibility. They are pure weight-management utilities.
+  - Used `local_dir_use_symlinks=False` in `snapshot_download` so that `./models` contains real files that are easy to inspect, serve with vLLM/ollama, or delete without following symlinks into the HF cache.
+  - Did not add `huggingface_hub` to `requirements.txt` because these are optional utility scripts; the dependency is checked at runtime with an actionable error message.
+  - Mirrored the paper's exact Hugging Face repo IDs (`meta-llama/...`) rather than ungated mirrors to ensure byte-for-byte compatibility with the published results.
+- **Expected effects / verification plan**:
+  - After accepting the Llama license pages and setting `HF_TOKEN`, `python scripts/download_local_models.py --models all` should populate `./models/meta-llama--Llama-3.1-8B-Instruct` and `./models/meta-llama--Llama-3.2-3B-Instruct` with safetensors/config/tokenizer files.
+  - `python scripts/delete_local_models.py --models all` should remove those directories and report freed space.
+  - No change to tests or pipeline; `python -m unittest discover -s tests` should still pass.
+- **Open questions / handoff**:
+  1. The local-model adaptations in `main.py`/`src/utils.py` still default to ollama/localhost and `qwen3.5:0.8b`; if the owner wants to run the Llama pair, the run command must point `--api_url`/`--model` at a served endpoint (vLLM, ollama, llama.cpp server) using the downloaded weights.
+  2. Standing hardware blocker: CUDA 11.2 + driver 460 cannot run `torch==2.7.0` on GPU. Decide whether to upgrade the driver/CUDA or switch to a CPU/ollama/llama.cpp serving path before any local inference run.
+
+## [2026-09-13] Entry 011 — No-root local inference path: llama.cpp + CUDA 11.4 in user space
+
+- **Agent/model**: azure/kimi-k2.7-code
+- **Scope read**: AGENTS.md ☑ ; session-log last 3 ☑ ; experiment-registry ☑ (no runs)
+- **Actions**:
+  - Responded to user constraint: no root access on the Tesla V100/CUDA 11.2/driver 460 machine.
+  - Created `scripts/setup_llama_cpp_cuda114.sh`: installs a user-space conda environment `extagents-llama` with `cudatoolkit=11.4`, `cudnn=8`, `cmake`, `make`, `gxx_linux-64=10`; clones/updates `llama.cpp` into `.llama_cpp`; compiles it with `CMAKE_CUDA_ARCHITECTURES=70` for the V100; writes `activate_llama_cpp_cuda114.sh` so the env can be re-sourced later.
+  - Created `scripts/download_gguf_models.py`: downloads GGUF quantizations from ungated `bartowski/Llama-3.1-8B-Instruct-GGUF` and `bartowski/Llama-3.2-3B-Instruct-GGUF`. Supports `--quant {Q4_K_M,Q5_K_M,Q6_K,Q8_0}` (default Q5_K_M). Writes `models-gguf/gguf_manifest.txt` for the launcher.
+  - Created `scripts/run_llama_cpp_server.sh`: starts `llama-server` with OpenAI-compatible API on a chosen port. Defaults to `--ctx-size 131072`, full GPU offload (`--n-gpu-layers 999`), and exposes `--tensor-split` for splitting across the 4 V100s.
+- **Decisions & rationale**:
+  - **Why llama.cpp + GGUF**: the system driver (460.91.03) cannot be upgraded without root, so CUDA 11.8/12.x PyTorch wheels are impossible. However, the driver supports the CUDA 11.4 *runtime*, so a user-space CUDA 11.4 toolkit + llama.cpp build can still use the V100s. This is the only practical no-root GPU path.
+  - **Why conda cudatoolkit=11.4**: avoids touching system paths; all CUDA binaries/libs live inside the env. No root required.
+  - **Why GGUF instead of original HF weights**: llama.cpp consumes GGUF. Using ungated GGUF repos removes the token/license step required for `meta-llama/...` HF weights. Trade-off: quantization is an approximation of the FP16/BF16 weights used in the paper; this is acceptable for local engineering tests but should be noted if results are compared to paper numbers.
+  - **Why Q5_K_M default**: good quality/speed balance for 32 GB V100s; Q4_K_M can be used for faster iteration.
+  - **Kept scripts separate from pipeline**: no changes to `main.py`, `src/`, or eval scripts. The serving layer remains outside the research code, preserving baseline integrity.
+- **Expected effects / verification plan**:
+  - `bash scripts/setup_llama_cpp_cuda114.sh` should finish without errors and produce `.llama_cpp/build/bin/llama-server`.
+  - After sourcing `activate_llama_cpp_cuda114.sh`, `nvcc --version` should report CUDA 11.4.
+  - `python scripts/download_gguf_models.py --models all --quant Q5_K_M` should populate `models-gguf/`.
+  - `bash scripts/run_llama_cpp_server.sh --model reasoner --port 8001` should start an OpenAI-compatible endpoint; verify with `curl http://localhost:8001/v1/models`.
+  - If both reasoner (port 8001) and seeker (port 8002) are started, the existing `main.py --api_url http://localhost:8001/v1` can talk to one of them. Using both simultaneously for heterogeneous roles requires a small code change (two clients) that is out of scope for this utility-only session.
+- **Open questions / handoff**:
+  1. User must confirm conda is installed in user space; if not, the first step is a manual Miniconda install (commands are in the setup script error message).
+  2. Heterogeneous mode (3B seeker + 8B reasoner) is not yet wired into the pipeline; a future session can add dual-client support if the user wants to reproduce Table 6 exactly.
+  3. If V100 32 GB runs out of context at 131072 tokens, reduce `--ctx-size` to 65536 or 32768; ExtAgents chunks already fit within those windows.
+
