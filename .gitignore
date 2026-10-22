@@ -73,3 +73,4 @@ src/plot
 *.log
 !requirements.txt
 !LICENSE.txt
+docs/ExtAgents_Mid_Semester_Updated.pptx

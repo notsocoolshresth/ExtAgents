@@ -642,7 +642,7 @@ class TestRegistryAndInstall(unittest.TestCase):
     def test_available(self):
         self.assertEqual(
             chunkers.available(),
-            ["document_structure", "legacy", "overlap", "recursive_paragraph", "semantic"],
+            ["document_structure", "legacy", "overlap", "recursive_paragraph", "semantic", "semantic_tree"],
         )
 
     def test_unknown_chunker_raises(self):

@@ -28,7 +28,7 @@
 | CLI entry | `main.py:9-21` | Args: `task` (`rag`/`en`/`zh`), `chunk_length` (**8000** default), `input_length` (**128000**), `context_length` (**32768**), `--chunker` (**`legacy`** default), model/API config |
 | Tokenizer | `main.py:61` | Always `tiktoken` gpt-4o encoding for length accounting |
 | **Chunking (baseline)** | `src/utils.py:104-133` | `create_chunks`: encode → truncate to `input_length` → slice into fixed `chunk_length` token blocks → decode |
-| **Chunker selection** | `src/chunkers/` (new package) | Pluggable `create_chunks` strategies in per-strategy files: `legacy` (C0, byte-identical baseline) + `overlap` (C1, sliding-window overlap via LangChain `RecursiveCharacterTextSplitter`) + `recursive_paragraph` (C3) + `semantic` (C4, semantic breakpoints via LangChain `SemanticChunker`) + `document_structure` (C5, regex-based chapter/heading/separator detection with C3 fallback); `chunkers.install(id)` hot-swaps `utils.create_chunks`, so `src/pipeline.py` stays untouched; chosen via `main.py --chunker <id>` |
+| **Chunker selection** | `src/chunkers/` (new package) | Pluggable `create_chunks` strategies in per-strategy files: `legacy` (C0, byte-identical baseline) + `overlap` (C1, sliding-window overlap via LangChain `RecursiveCharacterTextSplitter`) + `recursive_paragraph` (C3) + `semantic` (C4, semantic breakpoints via LangChain `SemanticChunker`) + `document_structure` (C5, regex-based chapter/heading/separator detection with C3 fallback) + `semantic_tree` (C6, bottom-up binary tree with mean-pooled parent vectors, beam search k=4); `chunkers.install(id)` hot-swaps `utils.create_chunks`, so `src/pipeline.py` stays untouched; chosen via `main.py --chunker <id>` |
 | Truncation manner | `src/pipeline.py:46` + `src/utils.py:68-87` | `"front"` for RAG, `"middle"` for En/Zh |
 | MAP stage | `src/pipeline.py:59-97` | Per-chunk LLM extraction; iterations > 1 prepend previously extracted info (`max_info_tokens = context_length − chunk_length − 1000`) |
 | Info scoring | `src/utils.py:136-165` | LLM returns `Score: X` (regex `Score:\s*(\d+)`); en/zh only; infinite retry on parse failure |
@@ -104,6 +104,11 @@ python main.py --task en --output_dir results_en --chunker document_structure \
     --chunk_length 8000 --input_length 128000 --api_url "$OPENAI_BASE_URL" \
     --api_key "$OPENAI_API_KEY" --model "gpt-4o-mini-2024-07-18" --num_workers 8
 
+# Generation (alternative: semantic binary tree chunking, C6)
+python main.py --task en --output_dir results_en --chunker semantic_tree \
+    --chunk_length 8000 --input_length 128000 --api_url "$OPENAI_BASE_URL" \
+    --api_key "$OPENAI_API_KEY" --model "gpt-4o-mini-2024-07-18" --num_workers 8
+
 # Unit tests
 venv\Scripts\python.exe -m unittest discover -s tests
 
@@ -118,6 +123,6 @@ Environment note: primary dev machine is Windows (`C:\Users\Shresth\vscode2\ExtA
 
 | File | Purpose |
 |---|---|
-| `docs/research/research-plan.md` | Study charter: research questions, hypotheses, candidate techniques C0/C1/C3–C5, ablation matrix, metrics, statistics protocol |
+| `docs/research/research-plan.md` | Study charter: research questions, hypotheses, candidate techniques C0/C1/C3–C6, ablation matrix, metrics, statistics protocol |
 | `docs/research/session-log.md` | Append-only journal; mandated entry format; one entry per session |
 | `docs/research/experiment-registry.md` | One row per benchmark run: run_id, config, scores, cost, notes |
