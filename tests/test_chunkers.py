@@ -634,6 +634,117 @@ class TestDocumentStructureRealTokens(RealTokenizerTestCase):
                     self.assertLessEqual(len(self.tokenizer.encode(c)), cl)
 
 
+class TestSemanticTree(unittest.TestCase):
+    """Tests for C6 semantic binary tree chunking (question-aware)."""
+
+    def setUp(self):
+        self.tok = WordTokenizer()
+
+    def _mock_tree_chunks(self, text, question, chunk_length=100, input_length=10000, manner="front"):
+        """Call semantic_tree_chunks with mocked embedder + question context."""
+        from unittest.mock import patch, MagicMock
+        from src.chunkers.context import set_current_question, reset_current_question
+
+        def _split_like_semantic(t):
+            """Split text into units for mock embedding."""
+            import re
+            parts = re.split(r"\s+", t)
+            return [p for p in parts if p.strip()]
+
+        with patch("src.chunkers.semantic_tree._get_embedder") as MockEmb:
+            mock_emb = MagicMock()
+            # Return deterministic embeddings: question matches "relevant" units
+            def encode_side_effect(texts, **kwargs):
+                import numpy as np
+                arr = np.zeros((len(texts), 1024), dtype=np.float32)
+                for i, t in enumerate(texts):
+                    if "relevant" in t.lower() or "answer" in t.lower():
+                        arr[i, 0] = 1.0  # High similarity to question
+                    else:
+                        arr[i, 1] = 1.0
+                norms = np.linalg.norm(arr, axis=1, keepdims=True) + 1e-8
+                return arr / norms
+            mock_emb.encode.side_effect = encode_side_effect
+            MockEmb.return_value = mock_emb
+
+            token = set_current_question(question)
+            try:
+                return chunkers.get("semantic_tree")(
+                    self.tok, text, chunk_length, input_length, manner
+                )
+            finally:
+                reset_current_question(token)
+
+    def _mock_tree_chunks_no_question(self, text, chunk_length=100, input_length=10000, manner="front"):
+        """Call semantic_tree_chunks with mocked embedder but NO question (fallback path)."""
+        from unittest.mock import patch, MagicMock
+        from src.chunkers.context import set_current_question, reset_current_question
+
+        with patch("src.chunkers.semantic_tree._get_embedder") as MockEmb:
+            mock_emb = MagicMock()
+            def encode_side_effect(texts, **kwargs):
+                import numpy as np
+                arr = np.zeros((len(texts), 1024), dtype=np.float32)
+                for i in range(len(texts)):
+                    arr[i, i % 1024] = 1.0
+                norms = np.linalg.norm(arr, axis=1, keepdims=True) + 1e-8
+                return arr / norms
+            mock_emb.encode.side_effect = encode_side_effect
+            MockEmb.return_value = mock_emb
+
+            token = set_current_question(None)
+            try:
+                return chunkers.get("semantic_tree")(
+                    self.tok, text, chunk_length, input_length, manner
+                )
+            finally:
+                reset_current_question(token)
+
+    def test_question_aware_returns_relevant_leaves(self):
+        context = "irrelevant text. " * 5 + "the answer is here. " + "more irrelevant. " * 5
+        chunks = self._mock_tree_chunks(context, "what is the answer?")
+        self.assertTrue(any("answer is here" in c for c in chunks))
+
+    def test_question_aware_respects_soft_budget(self):
+        context = "the answer is here. " * 20
+        chunks = self._mock_tree_chunks(context, "answer", chunk_length=100)
+        total_tokens = sum(len(self.tok.encode(c)) for c in chunks)
+        self.assertLessEqual(total_tokens, 125)  # 1.25 * 100
+
+    def test_fallback_without_question(self):
+        chunks = self._mock_tree_chunks_no_question("a b c d", 10, 100, "front")
+        self.assertTrue(chunks)
+
+    def test_empty_context(self):
+        chunks = self._mock_tree_chunks("", "test question", 100, 100, "front")
+        self.assertEqual(chunks, [])
+
+    def test_nonpositive_chunk_length_raises(self):
+        with self.assertRaises(ValueError):
+            self._mock_tree_chunks("x", "test question", 0, 100, "front")
+
+    def test_output_budget_respected(self):
+        """Output budget (chunk_length * 1.25) limits returned tokens, not input_length."""
+        words = [f"w{i}" for i in range(200)]
+        context = " ".join(words)
+        # chunk_length=50, soft_budget=62. Question matches all "answer" units
+        # but budget limits how many are returned
+        chunks = self._mock_tree_chunks(context, "answer", chunk_length=50, input_length=100, manner="front")
+        total_tokens = sum(len(self.tok.encode(c)) for c in chunks)
+        self.assertLessEqual(total_tokens, 62)  # 1.25 * 50
+
+    def test_full_context_available_for_retrieval(self):
+        """Full context is embedded; retrieval not limited by input_length truncation."""
+        words = [f"w{i}" for i in range(200)]
+        context = " ".join(words)
+        # input_length=100 would previously truncate to 100 tokens
+        # Now full 200 tokens available; question matches tail
+        context_with_answer = context + " the answer is here"
+        chunks = self._mock_tree_chunks(context_with_answer, "answer", chunk_length=500, input_length=100, manner="front")
+        # Should find the answer even though it's beyond input_length
+        self.assertTrue(any("answer is here" in c for c in chunks))
+
+
 class TestRegistryAndInstall(unittest.TestCase):
     def setUp(self):
         chunkers.restore()

@@ -5,7 +5,7 @@ short spans). Parent nodes receive mean-pooled embeddings from their children.
 At query time, bounded beam search routes the question through the tree to
 select original-text leaves under a token budget.
 
-Embedding model: sentence-transformers/all-MiniLM-L6-v2 (CPU, 384-dim).
+Embedding model: jinaai/jina-embeddings-v3 (CPU, 1024-dim, 8192 token context).
 """
 
 from __future__ import annotations
@@ -17,14 +17,16 @@ from typing import List, Optional, Tuple
 import numpy as np
 
 from . import register
+from .context import get_current_question
 from .. import utils as _utils
 
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
 
-_DEFAULT_EMBEDDER_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
-_MAX_WORDPIECES_PER_UNIT = 256  # embedding model truncation limit
+_DEFAULT_EMBEDDER_MODEL = "jinaai/jina-embeddings-v3"
+_MAX_WORDPIECES_PER_UNIT = 6000  # embedding model truncation limit (8192 max, conservative)
+_EMBEDDING_DIM = 1024  # jina-embeddings-v3 dimension
 _SENTENCE_RE = re.compile(r"(?<=[.?!])\s+")
 
 # ---------------------------------------------------------------------------
@@ -48,6 +50,7 @@ def _get_embedder(model_name: str = _DEFAULT_EMBEDDER_MODEL):
         _embedder_cache[model_name] = SentenceTransformer(
             model_name,
             device="cpu",
+            trust_remote_code=True,  # required for jina-embeddings-v3
         )
     return _embedder_cache[model_name]
 
@@ -95,7 +98,7 @@ class TreeNode:
         self.start = start          # start token offset in retained input
         self.end = end              # end token offset (exclusive)
         self.token_count = token_count
-        self.embedding = embedding  # normalized mean-pooled vector (384-dim)
+        self.embedding = embedding  # normalized mean-pooled vector (1024-dim)
         self.left = left
         self.right = right
         self.is_leaf = (left is None and right is None)
@@ -154,27 +157,30 @@ def build_semantic_tree(
     manner: str = "middle",
     embedder_model: str = _DEFAULT_EMBEDDER_MODEL,
 ) -> TreeNode:
-    """Build a bottom-up binary semantic tree from the context.
+    """Build a bottom-up binary semantic tree from the FULL context.
     
-    Returns the root TreeNode covering the entire retained input.
+    Unlike baseline, we do NOT truncate at input_length here.
+    The tree indexes the entire context for retrieval.
+    Output budget is enforced later in retrieve_from_tree (soft cap 1.25 * chunk_length).
+    
+    Returns the root TreeNode covering the entire context.
     """
     if tokenizer is None:
         raise ValueError("semantic_tree chunker requires a tokenizer")
     
-    # Phase 0: truncate exactly like the baseline
-    tokens = _utils.truncate_input(
-        tokenizer.encode(context), input_length, manner=manner
-    )
+    # Phase 0: use FULL context (no input_length truncation)
+    # Tokenize to get offsets for later extraction
+    tokens = tokenizer.encode(context)
     text = tokenizer.decode(tokens)
     
     if not text.strip():
         # Return empty tree (single leaf with zero tokens)
-        return TreeNode(0, 0, 0, np.zeros(384, dtype=np.float32))
+        return TreeNode(0, 0, 0, np.zeros(_EMBEDDING_DIM, dtype=np.float32))
     
-    # Phase 1: create embedding units
+    # Phase 1: create embedding units from full context
     units = _split_into_embedding_units(text, tokenizer)
     if not units:
-        return TreeNode(0, 0, 0, np.zeros(384, dtype=np.float32))
+        return TreeNode(0, 0, 0, np.zeros(_EMBEDDING_DIM, dtype=np.float32))
     
     # Phase 2: embed all units
     embedder = _get_embedder(embedder_model)
@@ -239,11 +245,11 @@ def retrieve_from_tree(
     token_budget: int,
     embedder_model: str = _DEFAULT_EMBEDDER_MODEL,
     beam_width: int = 4,
-) -> List[str]:
+) -> List[TreeNode]:
     """Retrieve relevant leaves from the tree using bounded beam search.
     
-    Returns list of selected leaf texts (original contiguous passages),
-    in source order, with total token count <= token_budget.
+    Returns list of selected leaf TreeNodes in source order.
+    Uses soft budget (1.25 * token_budget) to allow slightly larger relevant chunks.
     """
     if root.token_count == 0:
         return []
@@ -279,28 +285,21 @@ def retrieve_from_tree(
         candidates = next_candidates[:beam_width]
     
     # All candidates are now leaves (or we hit max depth)
-    # Select leaves within token budget, preserving source order
+    # Select leaves within SOFT token budget (1.25x), preserving source order
     candidates.sort(key=lambda x: x[0].start)  # sort by source position
     
-    selected_texts = []
+    soft_budget = int(token_budget * 1.25)
+    selected = []
     total_tokens = 0
     
     for node, _ in candidates:
-        if total_tokens + node.token_count <= token_budget:
-            # Extract original text from token offsets
-            tokens = tokenizer.encode(root.embedding.tobytes())  # dummy to get tokenizer
-            # Actually, we need the original text. We'll decode from the full text.
-            # Since we only have the tree, we need to track the original text.
-            # For now, we reconstruct from the tree structure.
-            # Better: pass the full text and use offsets.
-            pass
+        if total_tokens + node.token_count <= soft_budget:
+            selected.append(node)
+            total_tokens += node.token_count
+        else:
+            break
     
-    # The above approach needs the original text to extract leaves.
-    # Let's restructure: the tree nodes should reference the original text.
-    # Actually, we can store the full text in the root and use offsets.
-    # Let me revise the approach.
-    
-    return selected_texts
+    return selected
 
 
 # ---------------------------------------------------------------------------
@@ -310,9 +309,9 @@ def retrieve_from_tree(
 def _extract_leaf_texts(root: TreeNode, tokenizer, full_text: str, selected_leaves: List[TreeNode]) -> List[str]:
     """Extract text for selected leaf nodes from the full text using token offsets."""
     texts = []
+    all_tokens = tokenizer.encode(full_text)
     for leaf in selected_leaves:
         # Decode the token span from the full text
-        all_tokens = tokenizer.encode(full_text)
         leaf_tokens = all_tokens[leaf.start:leaf.end]
         if leaf_tokens:
             texts.append(tokenizer.decode(leaf_tokens))
@@ -327,17 +326,14 @@ def semantic_tree_chunks(
     input_length: int,
     manner: str = "middle",
     embedder_model: str = _DEFAULT_EMBEDDER_MODEL,
-    beam_width: int = 4,
+    beam_width: int = 8,
 ) -> List[str]:
     """C6: semantic binary tree chunking with question-aware retrieval.
     
-    This chunker builds a bottom-up semantic tree and retrieves relevant
-    leaves based on the question. However, the chunker interface does not
-    receive the question directly, so this returns ALL leaves up to the
-    token budget (effectively a flat retrieval baseline).
-    
-    For full question-aware retrieval, use retrieve_from_tree() directly
-    with the question, which should be called from the pipeline before MAP.
+    Builds a bottom-up semantic tree from the FULL context (no input_length truncation),
+    then uses bounded beam search with the question embedding to select relevant leaves.
+    Falls back to first-N-leaves if no question is available (should not
+    happen in the pipeline since question is set via contextvar).
     """
     if chunk_length <= 0:
         raise ValueError("chunk_length must be positive")
@@ -345,31 +341,38 @@ def semantic_tree_chunks(
     if tokenizer is None:
         return _naive_semantic_tree_chunks(context, chunk_length)
     
-    # Build the tree
+    # Build the tree on FULL context
     root = build_semantic_tree(context, tokenizer, input_length, manner, embedder_model)
     
     if root.token_count == 0:
         return []
     
-    # Get all leaves in source order
-    leaves = _collect_leaves_in_order(root)
+    # Get question from contextvar (set by pipeline before calling create_chunks)
+    question = get_current_question()
     
-    # Select leaves up to token budget
-    selected = []
-    total_tokens = 0
-    for leaf in leaves:
-        if total_tokens + leaf.token_count <= chunk_length:
-            selected.append(leaf)
-            total_tokens += leaf.token_count
-        else:
-            break
+    if question:
+        # QUESTION-AWARE PATH: beam search to select relevant leaves
+        selected_leaves = retrieve_from_tree(
+            root, question, tokenizer, chunk_length, embedder_model, beam_width
+        )
+    else:
+        # FALLBACK (should not happen in pipeline): return first N leaves up to soft budget
+        leaves = _collect_leaves_in_order(root)
+        selected_leaves = []
+        total_tokens = 0
+        soft_budget = int(chunk_length * 1.25)
+        for leaf in leaves:
+            if total_tokens + leaf.token_count <= soft_budget:
+                selected_leaves.append(leaf)
+                total_tokens += leaf.token_count
+            else:
+                break
     
-    # Extract text for selected leaves
-    # We need the truncated text to decode from
-    tokens = _utils.truncate_input(tokenizer.encode(context), input_length, manner=manner)
-    truncated_text = tokenizer.decode(tokens)
+    # Extract text for selected leaves using FULL context (tree offsets match full tokenization)
+    full_tokens = tokenizer.encode(context)
+    full_text = tokenizer.decode(full_tokens)
     
-    return _extract_leaf_texts(root, tokenizer, truncated_text, selected)
+    return _extract_leaf_texts(root, tokenizer, full_text, selected_leaves)
 
 
 def _collect_leaves_in_order(node: TreeNode) -> List[TreeNode]:

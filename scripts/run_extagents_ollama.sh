@@ -134,5 +134,5 @@ python "${REPO_ROOT}/main.py" \
     --num_workers "${NUM_WORKERS}" \
     --chunker "${CHUNKER}"
 
-cp "${RUN_DIR}/final_preds.jsonl" "${RUN_DIR}/final_preds_${CHUNKER}.jsonl"
-echo "[run] Named predictions: ${RUN_DIR}/final_preds_${CHUNKER}.jsonl"
+cp "${RUN_DIR}/final_preds.jsonl" "${RUN_DIR}/final_preds_${CHUNKER}_${DATASET}.jsonl"
+echo "[run] Named predictions: ${RUN_DIR}/final_preds_${CHUNKER}_${DATASET}.jsonl"

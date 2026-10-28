@@ -5,6 +5,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from . import prompt as prompt_module
 from . import utils
+from .chunkers.context import set_current_question, reset_current_question
 
 def process_example(i, examples, tokenizer, task, chunk_length, input_length, max_iterations=5, context_length=128000):
     """
@@ -44,13 +45,17 @@ def process_example(i, examples, tokenizer, task, chunk_length, input_length, ma
     
     # Get text chunks using utils.create_chunks
     manner = "front" if task == "rag" else "middle"
-    chunks = utils.create_chunks(
-        tokenizer=tokenizer,
-        context=context,
-        chunk_length=chunk_length,
-        input_length=input_length,
-        manner=manner
-    )
+    token = set_current_question(question)
+    try:
+        chunks = utils.create_chunks(
+            tokenizer=tokenizer,
+            context=context,
+            chunk_length=chunk_length,
+            input_length=input_length,
+            manner=manner
+        )
+    finally:
+        reset_current_question(token)
 
     try:
         while iteration < max_iterations:
