@@ -25,9 +25,21 @@ from .. import utils as _utils
 # ---------------------------------------------------------------------------
 
 _DEFAULT_EMBEDDER_MODEL = "jinaai/jina-embeddings-v3"
+_FALLBACK_EMBEDDER_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 _MAX_WORDPIECES_PER_UNIT = 6000  # embedding model truncation limit (8192 max, conservative)
-_EMBEDDING_DIM = 1024  # jina-embeddings-v3 dimension
 _SENTENCE_RE = re.compile(r"(?<=[.?!])\s+")
+
+
+def _get_embedding_dim(model_name: str = _DEFAULT_EMBEDDER_MODEL) -> int:
+    """Get the embedding dimension for a model by loading it once."""
+    embedder = _get_embedder(model_name)
+    return embedder.get_sentence_embedding_dimension()
+
+
+def _get_zero_embedding(model_name: str = _DEFAULT_EMBEDDER_MODEL) -> np.ndarray:
+    """Get a zero embedding vector of the correct dimension for the model."""
+    dim = _get_embedding_dim(model_name)
+    return np.zeros(dim, dtype=np.float32)
 
 # ---------------------------------------------------------------------------
 # Lazy embedder cache (avoids re-loading the model on every call)
@@ -47,11 +59,40 @@ def _get_embedder(model_name: str = _DEFAULT_EMBEDDER_MODEL):
                 "sentence-transformers is required for the semantic tree chunker. "
                 "Install it with: pip install sentence-transformers"
             )
-        _embedder_cache[model_name] = SentenceTransformer(
-            model_name,
-            device="cpu",
-            trust_remote_code=True,  # required for jina-embeddings-v3
-        )
+        try:
+            _embedder_cache[model_name] = SentenceTransformer(
+                model_name,
+                device="cpu",
+                trust_remote_code=True,  # required for jina-embeddings-v3
+            )
+        except (OSError, FileNotFoundError, ModuleNotFoundError) as e:
+            # Corrupted HF cache (common with trust_remote_code models).
+            # Clear the model's cache directory and retry once.
+            import shutil
+            from huggingface_hub import scan_cache_dir
+            
+            try:
+                hf_cache = scan_cache_dir()
+                for repo in hf_cache.repos:
+                    if repo.repo_id == model_name:
+                        shutil.rmtree(repo.repo_path, ignore_errors=True)
+                        break
+            except Exception:
+                pass  # best effort
+            
+            # Retry once after cache clear
+            try:
+                _embedder_cache[model_name] = SentenceTransformer(
+                    model_name,
+                    device="cpu",
+                    trust_remote_code=True,
+                )
+            except Exception:
+                # Final fallback: use a simpler model that doesn't require trust_remote_code
+                if model_name != _FALLBACK_EMBEDDER_MODEL:
+                    print(f"Warning: Failed to load {model_name}, falling back to {_FALLBACK_EMBEDDER_MODEL}")
+                    return _get_embedder(_FALLBACK_EMBEDDER_MODEL)
+                raise
     return _embedder_cache[model_name]
 
 
@@ -175,12 +216,12 @@ def build_semantic_tree(
     
     if not text.strip():
         # Return empty tree (single leaf with zero tokens)
-        return TreeNode(0, 0, 0, np.zeros(_EMBEDDING_DIM, dtype=np.float32))
+        return TreeNode(0, 0, 0, _get_zero_embedding(embedder_model))
     
     # Phase 1: create embedding units from full context
     units = _split_into_embedding_units(text, tokenizer)
     if not units:
-        return TreeNode(0, 0, 0, np.zeros(_EMBEDDING_DIM, dtype=np.float32))
+        return TreeNode(0, 0, 0, _get_zero_embedding(embedder_model))
     
     # Phase 2: embed all units
     embedder = _get_embedder(embedder_model)
