@@ -87,12 +87,18 @@ def _get_embedder(model_name: str = _DEFAULT_EMBEDDER_MODEL):
                     device="cpu",
                     trust_remote_code=True,
                 )
-            except Exception:
+            except Exception as e2:
                 # Final fallback: use a simpler model that doesn't require trust_remote_code
                 if model_name != _FALLBACK_EMBEDDER_MODEL:
-                    print(f"Warning: Failed to load {model_name}, falling back to {_FALLBACK_EMBEDDER_MODEL}")
+                    print(f"Warning: Failed to load {model_name} (error: {e2}), falling back to {_FALLBACK_EMBEDDER_MODEL}")
                     return _get_embedder(_FALLBACK_EMBEDDER_MODEL)
                 raise
+        except Exception as e:
+            # Catch any other exception during initial load
+            if model_name != _FALLBACK_EMBEDDER_MODEL:
+                print(f"Warning: Failed to load {model_name} (error: {e}), falling back to {_FALLBACK_EMBEDDER_MODEL}")
+                return _get_embedder(_FALLBACK_EMBEDDER_MODEL)
+            raise
     return _embedder_cache[model_name]
 
 
