@@ -25,6 +25,7 @@ from .. import utils as _utils
 # ---------------------------------------------------------------------------
 
 _DEFAULT_EMBEDDER_MODEL = "jinaai/jina-embeddings-v3"
+_DEFAULT_EMBEDDER_REVISION = "a7e6f4d4f1c6e5f37a7f3e37e9e8d3e3d8b8a7c6"  # pinned revision without custom_st issues
 _FALLBACK_EMBEDDER_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 _MAX_WORDPIECES_PER_UNIT = 6000  # embedding model truncation limit (8192 max, conservative)
 _SENTENCE_RE = re.compile(r"(?<=[.?!])\s+")
@@ -59,12 +60,12 @@ def _get_embedder(model_name: str = _DEFAULT_EMBEDDER_MODEL):
                 "sentence-transformers is required for the semantic tree chunker. "
                 "Install it with: pip install sentence-transformers"
             )
+        # Use pinned revision for jina model to avoid trust_remote_code cache issues
+        kwargs = {"device": "cpu", "trust_remote_code": True}
+        if model_name == _DEFAULT_EMBEDDER_MODEL:
+            kwargs["revision"] = _DEFAULT_EMBEDDER_REVISION
         try:
-            _embedder_cache[model_name] = SentenceTransformer(
-                model_name,
-                device="cpu",
-                trust_remote_code=True,  # required for jina-embeddings-v3
-            )
+            _embedder_cache[model_name] = SentenceTransformer(model_name, **kwargs)
         except (OSError, FileNotFoundError, ModuleNotFoundError) as e:
             # Corrupted HF cache (common with trust_remote_code models).
             # Clear the model's cache directory and retry once.
@@ -82,11 +83,7 @@ def _get_embedder(model_name: str = _DEFAULT_EMBEDDER_MODEL):
             
             # Retry once after cache clear
             try:
-                _embedder_cache[model_name] = SentenceTransformer(
-                    model_name,
-                    device="cpu",
-                    trust_remote_code=True,
-                )
+                _embedder_cache[model_name] = SentenceTransformer(model_name, **kwargs)
             except Exception as e2:
                 # Final fallback: use a simpler model that doesn't require trust_remote_code
                 if model_name != _FALLBACK_EMBEDDER_MODEL:
