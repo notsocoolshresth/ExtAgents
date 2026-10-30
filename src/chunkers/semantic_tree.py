@@ -16,6 +16,14 @@ from typing import List, Optional, Tuple
 
 import numpy as np
 
+# Suppress the transformers warning about unrecognized model for jina-embeddings-v3
+# The model works with trust_remote_code=True; the warning is cosmetic.
+warnings.filterwarnings(
+    "ignore",
+    message=r"Unrecognized model in jinaai/jina-embeddings-v3",
+    category=UserWarning,
+)
+
 from . import register
 from .context import get_current_question
 from .. import utils as _utils
@@ -24,8 +32,9 @@ from .. import utils as _utils
 # Configuration
 # ---------------------------------------------------------------------------
 
-_DEFAULT_EMBEDDER_MODEL = "jinaai/jina-embeddings-v3"
-_DEFAULT_EMBEDDER_REVISION = "a7e6f4d4f1c6e5f37a7f3e37e9e8d3e3d8b8a7c6"  # pinned revision without custom_st issues
+_DEFAULT_EMBEDDER_MODEL = "BAAI/bge-base-en-v1.5"
+# _DEFAULT_EMBEDDER_MODEL = "jinaai/jina-embeddings-v3"  # requires transformers<4.50, broken deps
+_DEFAULT_EMBEDDER_REVISION = None
 _FALLBACK_EMBEDDER_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 _MAX_WORDPIECES_PER_UNIT = 6000  # embedding model truncation limit (8192 max, conservative)
 _SENTENCE_RE = re.compile(r"(?<=[.?!])\s+")
