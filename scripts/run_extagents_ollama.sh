@@ -39,6 +39,7 @@ MODEL="llama3.2:3b"
 NUM_WORKERS=1
 CHUNKER="legacy"
 DATA_PATH=""
+LOG_DIR=""
 
 usage() {
     cat <<EOF
@@ -55,6 +56,7 @@ Options:
   --num_workers N             Parallel workers (default: 1)
   --chunker CHUNKER           Chunker ID: legacy, overlap, recursive_paragraph,
                               semantic, document_structure, semantic_tree (default: legacy)
+  --log_dir DIR               Directory for per-example log files (default: OUTPUT_DIR/CHUNKER/DATASET/logs)
   Results: DIR/CHUNKER/DATASET/final_preds_CHUNKER.jsonl
            (final_preds.jsonl in the same directory is the resume/eval file)
   -h, --help                  Show this message
@@ -73,6 +75,7 @@ while [[ $# -gt 0 ]]; do
         --model) MODEL="$2"; shift 2 ;;
         --num_workers) NUM_WORKERS="$2"; shift 2 ;;
         --chunker) CHUNKER="$2"; shift 2 ;;
+        --log_dir) LOG_DIR="$2"; shift 2 ;;
         -h|--help) usage ;;
         *) echo "Unknown option: $1" >&2; usage ;;
     esac
@@ -99,6 +102,7 @@ fi
 DATASET="${DATA_PATH##*/}"
 DATASET="${DATASET%.jsonl}"
 RUN_DIR="${OUTPUT_DIR}/${CHUNKER}/${DATASET}"
+LOG_DIR="${LOG_DIR:-${RUN_DIR}/logs}"
 
 # Verify Ollama is reachable
 if ! curl -s http://localhost:11434/v1/models >/dev/null 2>&1; then
@@ -118,6 +122,7 @@ echo "[run] Task: ${TASK}"
 echo "[run] Model: ${MODEL}"
 echo "[run] Chunker: ${CHUNKER}"
 echo "[run] Output: ${RUN_DIR}"
+echo "[run] Logs: ${LOG_DIR}"
 echo "[run] Data: ${DATA_PATH}"
 echo "[run] Ollama endpoint: http://localhost:11434/v1"
 
@@ -132,7 +137,8 @@ python "${REPO_ROOT}/main.py" \
     --api_key ollama \
     --model "${MODEL}" \
     --num_workers "${NUM_WORKERS}" \
-    --chunker "${CHUNKER}"
+    --chunker "${CHUNKER}" \
+    --log_dir "${LOG_DIR}"
 
 cp "${RUN_DIR}/final_preds.jsonl" "${RUN_DIR}/final_preds_${CHUNKER}_${DATASET}.jsonl"
 echo "[run] Named predictions: ${RUN_DIR}/final_preds_${CHUNKER}_${DATASET}.jsonl"

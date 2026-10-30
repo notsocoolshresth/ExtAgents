@@ -7,7 +7,7 @@ from . import prompt as prompt_module
 from . import utils
 from .chunkers.context import set_current_question, reset_current_question
 
-def process_example(i, examples, tokenizer, task, chunk_length, input_length, max_iterations=5, context_length=128000):
+def process_example(i, examples, tokenizer, task, chunk_length, input_length, max_iterations=5, context_length=128000, log_file=None):
     """
     Complete pipeline for processing a single example
     
@@ -24,6 +24,7 @@ def process_example(i, examples, tokenizer, task, chunk_length, input_length, ma
         chunk_length: Length of each text chunk
         input_length: Maximum input length to consider
         max_iterations: Maximum number of iterations
+        log_file: Optional file handle for per-example logging
         
     Returns:
         Processing result tuple (id, final prediction, info list, map stage time, reduce stage time)
@@ -41,7 +42,13 @@ def process_example(i, examples, tokenizer, task, chunk_length, input_length, ma
     # Variables specific to RAG task
     filtered_info = []
     
-    print(f"Processing example {i}...")
+    def log(msg):
+        if log_file:
+            with open(log_file, "a") as f:
+                f.write(f"[Example {id}] {msg}\n")
+        print(f"[Example {id}] {msg}")
+    
+    log(f"Starting processing (question: {question[:100]}...)")
     
     # Get text chunks using utils.create_chunks
     manner = "front" if task == "rag" else "middle"
@@ -56,10 +63,13 @@ def process_example(i, examples, tokenizer, task, chunk_length, input_length, ma
         )
     finally:
         reset_current_question(token)
+    
+    log(f"Created {len(chunks)} chunks")
 
     try:
         while iteration < max_iterations:
             iteration += 1
+            log(f"=== Iteration {iteration}/{max_iterations} ===")
             
             # MAP STAGE #
             chunked_msgs = []
@@ -87,10 +97,12 @@ def process_example(i, examples, tokenizer, task, chunk_length, input_length, ma
                 chunked_msgs.append((msgs, prompt))
 
             for chunk_id, (msgs, prompt) in enumerate(chunked_msgs):
+                log(f"  Map: Processing chunk {chunk_id+1}/{len(chunked_msgs)}")
                 map_start_time = time.time()
                 info = utils.chat(msgs)
                 map_end_time = time.time()
                 example_map_time += (map_end_time - map_start_time)
+                log(f"  Map: Chunk {chunk_id+1} done (info length: {len(info)} chars, time: {map_end_time - map_start_time:.2f}s)")
                 
                 if task in ["en", "zh"]:
                     reduce_start_time = time.time()
@@ -98,6 +110,7 @@ def process_example(i, examples, tokenizer, task, chunk_length, input_length, ma
                     reduce_end_time = time.time()
                     example_reduce_time += (reduce_end_time - reduce_start_time)
                     current_info.append((info, score))
+                    log(f"  Score: {score}")
                 elif task == "rag":
                     current_info.append(info)
             
@@ -108,8 +121,11 @@ def process_example(i, examples, tokenizer, task, chunk_length, input_length, ma
                     if "no information" not in info.lower():
                         filtered_info.append(info)
                 
+                log(f"  Filtered info count: {len(filtered_info)}/{len(current_info)}")
+                
                 # Exit iteration if no information was extracted in map stage
                 if not filtered_info:
+                    log("  No information extracted, stopping iterations")
                     break
 
             # REDUCE STAGE #
@@ -132,6 +148,7 @@ def process_example(i, examples, tokenizer, task, chunk_length, input_length, ma
                     # Try different candidate counts
                     for r in candidate_ranks:
                         selected_info = [info for info, score in sorted_info[:r]]
+                        log(f"  Reduce: Trying top-{r} candidates")
                         
                         prompt = prompt_module.create_reduce_prompt(task, selected_info, question)
 
@@ -140,6 +157,7 @@ def process_example(i, examples, tokenizer, task, chunk_length, input_length, ma
                         final_pred = utils.chat(msgs)
                         reduce_end_time = time.time()
                         example_reduce_time += (reduce_end_time - reduce_start_time)
+                        log(f"  Reduce: Prediction: {final_pred[:100]}... (time: {reduce_end_time - reduce_start_time:.2f}s)")
                         if "no answer" not in final_pred.lower() and "no info" not in final_pred.lower():
                             answer_found = True
                             break
@@ -156,6 +174,7 @@ def process_example(i, examples, tokenizer, task, chunk_length, input_length, ma
                     final_pred = utils.chat(msgs)
                     reduce_end_time = time.time()
                     example_reduce_time += (reduce_end_time - reduce_start_time)
+                    log(f"  Reduce (final): Prediction: {final_pred[:100]}... (time: {reduce_end_time - reduce_start_time:.2f}s)")
                     if "no answer" not in final_pred.lower() and "no info" not in final_pred.lower():
                         break
                 else:
@@ -165,6 +184,7 @@ def process_example(i, examples, tokenizer, task, chunk_length, input_length, ma
                     
                     msgs = prompt_module.create_chunked_msgs(prompt)
                     final_pred = utils.chat(msgs)
+                    log(f"  Reduce: Prediction: {final_pred[:100]}...")
                     if "no answer" not in final_pred.lower() and "no info" not in final_pred.lower():
                         break
                         
@@ -191,6 +211,7 @@ def process_example(i, examples, tokenizer, task, chunk_length, input_length, ma
                         final_pred = utils.chat(msgs)
                         reduce_end_time = time.time()
                         example_reduce_time += (reduce_end_time - reduce_start_time)
+                        log(f"  Reduce (k={k}): Prediction: {final_pred[:100]}... (time: {reduce_end_time - reduce_start_time:.2f}s)")
                         if "no answer" not in final_pred.lower():
                             break
                         k += 1
@@ -207,6 +228,7 @@ def process_example(i, examples, tokenizer, task, chunk_length, input_length, ma
                     final_pred = utils.chat(msgs)
                     reduce_end_time = time.time()
                     example_reduce_time += (reduce_end_time - reduce_start_time)
+                    log(f"  Reduce (final): Prediction: {final_pred[:100]}... (time: {reduce_end_time - reduce_start_time:.2f}s)")
                     if "no answer" not in final_pred.lower():
                         break
 
@@ -218,6 +240,7 @@ def process_example(i, examples, tokenizer, task, chunk_length, input_length, ma
                     final_pred = utils.chat(msgs)
                     reduce_end_time = time.time()
                     example_reduce_time += (reduce_end_time - reduce_start_time)
+                    log(f"  Reduce: Prediction: {final_pred[:100]}... (time: {reduce_end_time - reduce_start_time:.2f}s)")
                     if "no answer" not in final_pred.lower():
                         break
 
@@ -228,6 +251,7 @@ def process_example(i, examples, tokenizer, task, chunk_length, input_length, ma
             final_pred, post_time = utils.postprocess_prediction(final_pred, question, prompt_module)
             reduce_end_time = time.time()
             example_reduce_time += post_time
+            log(f"  Post-processed prediction: {final_pred[:100]}...")
 
         # Create output format for different tasks
         if task in ["en", "zh"]:
@@ -248,14 +272,15 @@ def process_example(i, examples, tokenizer, task, chunk_length, input_length, ma
             ]
 
         example_total_time = example_map_time + example_reduce_time
+        log(f"Completed in {example_total_time:.2f}s (Map: {example_map_time:.2f}s, Reduce: {example_reduce_time:.2f}s)")
         return id, final_pred, current_info_list, example_map_time, example_reduce_time
 
     except Exception as e:
-        print(f"Error in example {i}: {e}")
+        log(f"Error: {e}")
         return None
 
 
-def run_pipeline(examples, tokenizer, task, chunk_length, input_length, output_dir, max_workers=1, context_length=128000):
+def run_pipeline(examples, tokenizer, task, chunk_length, input_length, output_dir, max_workers=1, context_length=128000, log_dir=None):
     """
     Execute the complete Map-Reduce pipeline to process multiple examples
     
@@ -267,6 +292,7 @@ def run_pipeline(examples, tokenizer, task, chunk_length, input_length, output_d
         input_length: Maximum input length to consider
         output_dir: Directory for output results
         max_workers: Number of parallel worker threads
+        log_dir: Optional directory for per-example log files
         
     Returns:
         List of processing results and runtime information
@@ -276,6 +302,14 @@ def run_pipeline(examples, tokenizer, task, chunk_length, input_length, output_d
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     final_output_path = output_dir / f"final_preds.jsonl"
+    
+    # Set up logging directory
+    if log_dir:
+        log_dir = Path(log_dir)
+        log_dir.mkdir(parents=True, exist_ok=True)
+    else:
+        log_dir = output_dir / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
 
     final_preds = []
     processed_ids = set()  # Set to store already processed IDs
@@ -329,6 +363,7 @@ def run_pipeline(examples, tokenizer, task, chunk_length, input_length, output_d
             print(f"No result for example {id}")
 
     print(f"Processing {stop_idx - start_idx - len(processed_ids)} examples with {max_workers} workers...")
+    print(f"Logs will be written to: {log_dir}")
     
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = []
@@ -337,6 +372,7 @@ def run_pipeline(examples, tokenizer, task, chunk_length, input_length, output_d
             # Skip already processed IDs
             if i in processed_ids:
                 continue
+            log_file = log_dir / f"example_{i}.log"
             future = executor.submit(
                 process_example,
                 i,
@@ -346,6 +382,7 @@ def run_pipeline(examples, tokenizer, task, chunk_length, input_length, output_d
                 chunk_length,
                 input_length,
                 context_length=context_length,
+                log_file=log_file,
             )
             futures.append(future)
 

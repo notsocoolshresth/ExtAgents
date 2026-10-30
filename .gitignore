@@ -28,6 +28,7 @@ env/
 
 # log files
 *.log
+logs/
 
 # results folder
 results*/

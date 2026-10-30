@@ -20,6 +20,7 @@ def parse_args():
     parser.add_argument("--context_length", type=int, default=32768)
     parser.add_argument("--data_path", type=str, default=None)
     parser.add_argument("--chunker", type=str, default="legacy")
+    parser.add_argument("--log_dir", type=str, default=None, help="Directory for per-example log files")
     return parser.parse_args()
 
 
@@ -33,6 +34,7 @@ def main():
     input_length = args.input_length
     context_length = args.context_length
     data_path = args.data_path
+    log_dir = args.log_dir
     
     # Initialize OpenAI client and set global variables
     utils.initialize_client(args.api_url, args.api_key, args.model)
@@ -73,6 +75,7 @@ def main():
         output_dir,
         max_workers=args.num_workers,
         context_length=context_length,
+        log_dir=log_dir,
     )
 
 
