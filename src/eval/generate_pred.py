@@ -24,7 +24,7 @@ def generate_dev_fullwiki_pred(
         final_dict["answer"][question_id] = predicted_ans
     
     with open(output_file, 'w', encoding='utf-8') as f:
-        json.dump(final_dict, f, ensure_ascii=False, indent=2)
+        json.dump(final_dict, f, ensure_ascii=True, indent=2)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Generate dev_fullwiki_pred.json")
