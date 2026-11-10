@@ -369,4 +369,27 @@
   1. Beam width ablation (k=1, 2, 4) needed for P4 to determine optimal setting per task.
   2. Embedding model ablation (all-MiniLM-L6-v2 vs. larger) for P4 per research plan Â§7 threat.
   3. Compare with top-down semantic splitting approach experimentally.
-  4. Full question-aware retrieval integration requires pipeline modification to pass question to chunker â€” current implementation returns all leaves up to budget as flat baseline.
+  4. Full question-aware retrieval integration requires pipeline modification to pass question to chunker â€” current implementation returns all leaves up to budget as flat baseline.## [2026-11-07] Entry 021 — RAG matrix complete @ 8000 tokens: C3 & C5 evaluated, all 6 chunkers recorded
+
+- **Agent/model**: nemotron-3-ultra-550b-a55b (opencode)
+- **Scope read**: AGENTS.md ? ; session-log last 3 ? (019, 020) ; experiment-registry ? (existing 4 rows)
+- **Actions**:
+  - Evaluated existing results in esults_rag_ollama/ for all 6 chunkers @ chunk_length=8000, model=llama3.1:8b (Ollama):
+    - Ran generate_pred.py + hotpot_evaluate_v1.py for legacy, overlap, recursive_paragraph, semantic, document_structure, semantic_tree
+  - Created docs/research/rag_results_8000_llama31_8b.md with full results table
+  - Updated docs/research/experiment-registry.md with all 6 rows (corrected prior rows with measured values, added C3 & C5)
+- **Decisions & rationale**:
+  - All 6 chunkers now have RAG results at the primary matrix cell (8000 tokens, llama3.1:8b)
+  - C6 (semantic_tree) leads: EM=9.70%, F1=18.22%
+  - C4 (semantic) 2nd on EM: EM=9.16%, F1=17.26%
+  - C1 (overlap) improves EM over baseline (+2.16 pp) but lowers F1
+  - C3 (recursive_paragraph) and C5 (document_structure) underperform baseline on both metrics
+  - Results recorded at measured precision (2 decimals) to match registry conventions
+- **Expected effects / verification plan**:
+  - Registry now has complete priority-1 RAG column (6 chunkers × rag @ 8000)
+  - Next: run En.QA matrix (6 chunkers @ 8000 tokens) — priority 1 incomplete
+  - Then: size-interaction runs (C0/C1 × {4000, 16000}) per research-plan §5.3 priority 2
+- **Open questions / handoff**:
+  1. Run En.QA (longbook_qa_eng) for all 6 chunkers @ 8000 tokens — current priority gap
+  2. Model decision: paper uses gpt-4o-mini API; current runs on local Ollama. Confirm if full matrix should be API or local.
+  3. Commit vs revert local-model adaptations in main.py/src/utils.py (dirty tree since Entry 002)
