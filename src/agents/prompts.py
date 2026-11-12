@@ -14,7 +14,7 @@ Available tools:
 Strategy:
 1. Search for key entities/relations from the question using bm25_search
 2. Read promising chunks using read_chunk or read_range
-3. Extract relevant information using extract
+3. Extract relevant information using extract (MUST use the actual text from read_chunk/read_range as 'passage')
 4. Repeat until you have enough evidence to answer
 5. Synthesize a final answer using synthesize
 
@@ -29,17 +29,19 @@ ACTION: bm25_search({{"query": "Einstein birthplace", "top_k": 5}})
 THOUGHT: The search found chunk 42 with high score. I'll read it to get details.
 ACTION: read_chunk({{"chunk_id": 42}})
 
-THOUGHT: The chunk mentions Einstein was born in Ulm. I'll extract this information.
-ACTION: extract({{"passage": "...", "question": "Where was Einstein born?", "prior_evidence": ""}})
+THOUGHT: The chunk mentions Einstein was born in Ulm. I'll extract this information using the ACTUAL text from the chunk.
+ACTION: extract({{"passage": "Albert Einstein was born in Ulm, Germany on March 14, 1879...", "question": "Where was Einstein born?", "prior_evidence": ""}})
 
 THOUGHT: I have the answer. I'll synthesize it.
 ACTION: synthesize({{"evidence": [{{"info": "Einstein was born in Ulm, Germany.", "confidence": 0.95}}], "question": "Where was Einstein born?"}})
 
 Important:
 - Always output valid JSON for tool arguments
+- For extract: the 'passage' MUST be the actual text returned by read_chunk or read_range (not "..." or empty)
 - Use prior_evidence in extract to avoid repeating information
 - The synthesize tool should be called only once at the end
-- Max 8 steps total
+- Max 12 steps total
+- Do NOT repeat the same search or read - try different queries or chunk IDs
 """
 
 

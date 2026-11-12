@@ -1,9 +1,10 @@
 """Multihop QA agent implementation."""
 
 import json
+import re
 import time
 import logging
-from typing import Dict, List, Any, Optional, Tuple
+from typing import Dict, List, Any, Optional, Tuple, Set
 
 from .base import BaseAgent, Tool, ToolResult, Action
 from .context import ContextManager
@@ -25,7 +26,7 @@ class MultihopAgent(BaseAgent):
         client, 
         model: str, 
         tokenizer, 
-        max_steps: int = 8,
+        max_steps: int = 12,
         log_file: Optional[str] = None
     ):
         super().__init__(max_steps)
@@ -40,6 +41,9 @@ class MultihopAgent(BaseAgent):
         # Build system prompt
         tool_descriptions = self._format_tool_descriptions()
         self.system_prompt = create_agent_prompt(tool_descriptions)
+        
+        # Track executed actions for deduplication
+        self._executed_actions: Set[Tuple[str, str]] = set()
     
     def _log(self, msg: str) -> None:
         """Log message to file and stdout."""
@@ -54,6 +58,7 @@ class MultihopAgent(BaseAgent):
         
         evidence = []
         trajectory = []
+        self._executed_actions.clear()
         
         for step in range(self.max_steps):
             self._log(f"[Agent] Step {step + 1}/{self.max_steps}")
@@ -62,6 +67,23 @@ class MultihopAgent(BaseAgent):
             action = self._decide_action(question, evidence, trajectory)
             self._log(f"[Agent] Thought: {action.thought}")
             self._log(f"[Agent] Action: {action.tool}({action.args})")
+            
+            # Check for duplicate action
+            action_key = (action.tool, json.dumps(action.args, sort_keys=True))
+            if action_key in self._executed_actions:
+                self._log(f"[Agent] Skipping duplicate action: {action.tool}({action.args})")
+                # Force a different action - try to synthesize if we have evidence, else search with different query
+                if evidence and action.tool != "synthesize":
+                    action = Action(tool="synthesize", args={"evidence": evidence, "question": question}, thought="Duplicate action, forcing synthesis")
+                else:
+                    # Modify search query slightly
+                    if action.tool == "bm25_search":
+                        new_query = action.args.get("query", "") + " more details"
+                        action = Action(tool="bm25_search", args={"query": new_query, "top_k": 5}, thought="Duplicate search, trying broader query")
+                    else:
+                        action = Action(tool="bm25_search", args={"query": question, "top_k": 5}, thought="Stuck, defaulting to search")
+            
+            self._executed_actions.add(action_key)
             
             # Execute tool
             if action.tool not in self.tools:
@@ -144,6 +166,8 @@ class MultihopAgent(BaseAgent):
                 else:
                     context_parts.append(f"ERROR: {result.error}")
         
+        # Add explicit instruction to avoid repetition
+        context_parts.append("\nIMPORTANT: Do NOT repeat previous searches or reads. Use new queries or read different chunks.")
         context_parts.append("\nTHOUGHT:")
         
         prompt = "".join(context_parts)
@@ -164,27 +188,27 @@ class MultihopAgent(BaseAgent):
         tool_name = ""
         args = {}
         
-        lines = response.strip().split("\n")
-        for line in lines:
-            line = line.strip()
-            if line.startswith("THOUGHT:"):
-                thought = line[8:].strip()
-            elif line.startswith("ACTION:"):
-                action_str = line[7:].strip()
-                # Parse tool_name(args)
-                if "(" in action_str and ")" in action_str:
-                    tool_name = action_str[:action_str.index("(")].strip()
-                    args_str = action_str[action_str.index("(")+1:action_str.rindex(")")]
-                    try:
-                        args = json.loads(args_str)
-                    except json.JSONDecodeError:
-                        # Try to parse as key=value pairs
-                        args = self._parse_kv_args(args_str)
+        # Use regex to find THOUGHT and ACTION blocks (handles multiline)
+        thought_match = re.search(r'THOUGHT:\s*(.*?)(?=\nACTION:|$)', response, re.DOTALL | re.IGNORECASE)
+        if thought_match:
+            thought = thought_match.group(1).strip()
+        
+        action_match = re.search(r'ACTION:\s*(.*?)(?=\nTHOUGHT:|$)', response, re.DOTALL | re.IGNORECASE)
+        if action_match:
+            action_str = action_match.group(1).strip()
+            # Parse tool_name(args) - handle multiline JSON
+            if "(" in action_str and ")" in action_str:
+                tool_name = action_str[:action_str.index("(")].strip()
+                args_str = action_str[action_str.index("(")+1:action_str.rindex(")")]
+                try:
+                    args = json.loads(args_str)
+                except json.JSONDecodeError:
+                    args = self._parse_kv_args(args_str)
         
         if not tool_name:
             # Default to search if parsing fails
             tool_name = "bm25_search"
-            args = {"query": response[:100], "top_k": 5}
+            args = {"query": "relevant information", "top_k": 5}
             thought = "Parsing failed, defaulting to search"
         
         return Action(tool=tool_name, args=args, thought=thought)
@@ -193,7 +217,6 @@ class MultihopAgent(BaseAgent):
         """Parse key=value arguments."""
         args = {}
         # Simple parsing for key=value, key="value"
-        import re
         pairs = re.findall(r'(\w+)\s*=\s*([^,]+)(?:,|$)', args_str)
         for key, value in pairs:
             value = value.strip().strip('"\'')
@@ -231,6 +254,12 @@ class MultihopAgent(BaseAgent):
                 infos = [t["result"].data.get("info", "") for t in recent_extracts]
                 if any("NO INFORMATION" in info.upper() for info in infos):
                     return True
+        
+        # Terminate if we're stuck in loops (same action repeated 3+ times)
+        if len(trajectory) >= 6:
+            recent_actions = [(t["action"].tool, json.dumps(t["action"].args, sort_keys=True)) for t in trajectory[-6:]]
+            if len(set(recent_actions)) <= 2:  # Only 1-2 unique actions in last 6 steps
+                return True
         
         return False
 
@@ -345,7 +374,7 @@ def run_agentic_pipeline(
                 client=utils.client,
                 model=utils.model,
                 tokenizer=tokenizer,
-                max_steps=8,
+                max_steps=12,
                 log_file=log_file
             )
             
