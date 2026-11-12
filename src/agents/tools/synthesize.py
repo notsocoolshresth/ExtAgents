@@ -1,6 +1,6 @@
 """Synthesize tool for the agentic pipeline."""
 
-import json
+import re
 from ..base import Tool, ToolResult
 from ..context import ContextManager
 from ..prompts import create_synthesize_prompt
@@ -39,26 +39,42 @@ class SynthesizeTool:
             
             response = utils.chat(messages)
             
-            # Parse response as JSON
-            try:
-                parsed = json.loads(response)
-                answer = parsed.get("answer", "")
-                confidence = float(parsed.get("confidence", 0.5))
-                citations = parsed.get("citations", [])
-            except json.JSONDecodeError:
-                # Fallback: treat entire response as answer
-                answer = response
-                confidence = 0.5
-                citations = []
+            # Clean the response: strip whitespace, remove code fences if any
+            answer = self._clean_answer(response)
             
-            data = {
-                "answer": answer,
-                "confidence": confidence,
-                "citations": citations
-            }
-            return ToolResult(success=True, data=data)
+            # Return clean answer
+            return ToolResult(success=True, data={"answer": answer})
         except Exception as e:
             return ToolResult(success=False, data=None, error=str(e))
+    
+    def _clean_answer(self, response: str) -> str:
+        """Clean LLM response to extract just the answer."""
+        answer = response.strip()
+        
+        # Remove markdown code fences
+        if answer.startswith("```"):
+            lines = answer.split('\n')
+            # Keep content between first and last fence
+            if len(lines) > 2:
+                answer = '\n'.join(lines[1:-1])
+            else:
+                answer = answer.strip('`')
+        
+        # If it looks like JSON, try to extract answer field
+        if answer.startswith('{') and 'answer' in answer:
+            import json
+            try:
+                parsed = json.loads(answer)
+                if 'answer' in parsed:
+                    answer = str(parsed['answer'])
+            except json.JSONDecodeError:
+                pass
+        
+        # Remove any "answer:" prefix
+        if answer.lower().startswith("answer:"):
+            answer = answer[7:].strip()
+        
+        return answer.strip()
     
     def _format_evidence(self, evidence: list) -> str:
         """Format evidence list into a string for the prompt."""

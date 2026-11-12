@@ -71,12 +71,9 @@ Question: {question}
 Evidence:
 {evidence_str}
 
-Return a JSON object with:
-- "answer": the final answer, as short as possible (string)
-- "confidence": confidence score 0.0-1.0 (float)
-- "citations": list of evidence indices or token ranges that support the answer (list)
+Output ONLY the final answer as a single word, phrase, or short sentence. No explanation, no JSON, no extra text.
 
-If the evidence is insufficient, return {{"answer": "NO ANSWER", "confidence": 0.0, "citations": []}}"""
+If the evidence is insufficient, output exactly: NO ANSWER"""
 
 
 def create_agent_prompt(tool_descriptions: str) -> str:
