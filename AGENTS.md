@@ -25,10 +25,11 @@
 
 | Component | Location | What it does |
 |---|---|---|
-| CLI entry | `main.py:9-21` | Args: `task` (`rag`/`en`/`zh`), `chunk_length` (**8000** default), `input_length` (**128000**), `context_length` (**32768**), `--chunker` (**`legacy`** default), model/API config |
-| Tokenizer | `main.py:61` | Always `tiktoken` gpt-4o encoding for length accounting |
+| CLI entry | `main.py:9-24` | Args: `task` (`rag`/`en`/`zh`), `chunk_length` (**8000** default), `input_length` (**128000**), `context_length` (**32768**), `--chunker` (**`legacy`** default), `--agent` (**`legacy`** default), model/API config |
+| Tokenizer | `main.py:66` | Always `tiktoken` gpt-4o encoding for length accounting |
 | **Chunking (baseline)** | `src/utils.py:104-133` | `create_chunks`: encode → truncate to `input_length` → slice into fixed `chunk_length` token blocks → decode |
-| **Chunker selection** | `src/chunkers/` (new package) | Pluggable `create_chunks` strategies in per-strategy files: `legacy` (C0, byte-identical baseline) + `overlap` (C1, sliding-window overlap via LangChain `RecursiveCharacterTextSplitter`) + `recursive_paragraph` (C3) + `semantic` (C4, semantic breakpoints via LangChain `SemanticChunker`) + `document_structure` (C5, regex-based chapter/heading/separator detection with C3 fallback) + `semantic_tree` (C6, bottom-up binary tree with mean-pooled parent vectors, beam search k=4); `chunkers.install(id)` hot-swaps `utils.create_chunks`, so `src/pipeline.py` stays untouched; chosen via `main.py --chunker <id>` |
+| **Chunker selection** | `src/chunkers/` (package) | Pluggable `create_chunks` strategies: `legacy` (C0, byte-identical baseline) + `overlap` (C1, sliding-window overlap via LangChain `RecursiveCharacterTextSplitter`) + `recursive_paragraph` (C3) + `semantic` (C4, semantic breakpoints via LangChain `SemanticChunker`) + `document_structure` (C5, regex-based chapter/heading/separator detection with C3 fallback) + `semantic_tree` (C6, bottom-up binary tree with mean-pooled parent vectors, beam search k=4); `chunkers.install(id)` hot-swaps `utils.create_chunks`, so `src/pipeline.py` stays untouched; chosen via `main.py --chunker <id>` |
+| **Agent selection** | `src/agents/` (package) | Pluggable pipeline runners: `legacy` (map-reduce, `src/pipeline.py`) + `multihop` (ReAct-style tool-using agent, `src/agents/multihop_agent.py`); `agents.install(id)` hot-swaps `pipeline.run_pipeline`; chosen via `main.py --agent <id>` |
 | Truncation manner | `src/pipeline.py:46` + `src/utils.py:68-87` | `"front"` for RAG, `"middle"` for En/Zh |
 | MAP stage | `src/pipeline.py:59-97` | Per-chunk LLM extraction; iterations > 1 prepend previously extracted info (`max_info_tokens = context_length − chunk_length − 1000`) |
 | Info scoring | `src/utils.py:136-165` | LLM returns `Score: X` (regex `Score:\s*(\d+)`); en/zh only; infinite retry on parse failure |
@@ -84,6 +85,11 @@ python main.py --task rag --output_dir results_rag --chunk_length 8000 \
     --input_length 128000 --api_url "$OPENAI_BASE_URL" --api_key "$OPENAI_API_KEY" \
     --model "gpt-4o-mini-2024-07-18" --num_workers 8
 
+# Generation (alternative: multihop agent)
+python main.py --task rag --output_dir results_rag_multihop --agent multihop \
+    --chunk_length 8000 --input_length 128000 --api_url "$OPENAI_BASE_URL" \
+    --api_key "$OPENAI_API_KEY" --model "gpt-4o-mini-2024-07-18" --num_workers 8
+
 # Generation (alternative: recursive-paragraph chunking, C3)
 python main.py --task rag --output_dir results_rag --chunker recursive_paragraph \
     --chunk_length 8000 --input_length 128000 --api_url "$OPENAI_BASE_URL" \
@@ -110,7 +116,7 @@ python main.py --task en --output_dir results_en --chunker semantic_tree \
     --api_key "$OPENAI_API_KEY" --model "gpt-4o-mini-2024-07-18" --num_workers 8
 
 # Unit tests
-venv\Scripts\python.exe -m unittest discover -s tests
+python -m unittest discover -s tests
 
 # Evaluation
 bash scripts/eval_rag.sh results_rag   # HotpotQA EM/F1
